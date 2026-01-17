@@ -1,0 +1,10 @@
+[project]
+name = "ludo-stacked-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.128.0",
+    "supabase>=2.27.0",
+    "pydantic-settings>=2.6.0",
+    "PyJWT[crypto]>=2.8.0",
+]
