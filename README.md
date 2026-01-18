@@ -67,8 +67,8 @@ app/
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| GET | `/` | Get current user's profile | Yes |
-| PATCH | `/` | Update display name (1-50 chars) | Yes |
+| GET | `/api/v1/profile` | Get current user's profile | Yes |
+| PATCH | `/api/v1/profile` | Update display name (1-50 chars) | Yes |
 
 ### Other
 
