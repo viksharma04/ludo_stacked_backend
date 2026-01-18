@@ -88,11 +88,18 @@ async def get_current_user_token(
         HTTPAuthorizationCredentials | None,
         Depends(HTTPBearer(auto_error=False)),
     ],
-) -> str | None:
-    """Get the raw JWT token from the request."""
+) -> str:
+    """Get the raw JWT token from the request.
+
+    Raises HTTPException 401 if no token is provided.
+    """
     if credentials is None:
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return credentials.credentials
 
 
-CurrentUserToken = Annotated[str | None, Depends(get_current_user_token)]
+CurrentUserToken = Annotated[str, Depends(get_current_user_token)]
