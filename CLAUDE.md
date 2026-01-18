@@ -11,6 +11,16 @@ uv run fastapi dev         # Start development server (http://localhost:8000, au
 
 API docs available at `http://localhost:8000/docs` when running.
 
+## Deployment (Railway)
+
+When adding or updating dependencies in `pyproject.toml`, regenerate `requirements.txt`:
+
+```bash
+uv export --no-hashes > requirements.txt
+```
+
+Railway uses `requirements.txt` for deployment. Dev dependencies (in `[dependency-groups] dev`) are excluded automatically.
+
 ## Architecture Overview
 
 FastAPI backend using Supabase for authentication and database. Python 3.12+, managed with UV package manager.
