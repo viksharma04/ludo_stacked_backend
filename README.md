@@ -46,11 +46,13 @@ app/
 ├── config.py            # Environment configuration
 ├── dependencies/
 │   ├── auth.py          # JWT validation via Supabase JWKS
-│   └── supabase.py      # Supabase client singleton
+│   └── supabase.py      # Supabase client (anon + authenticated)
 ├── routers/
-│   └── auth.py          # Authentication endpoints
+│   ├── auth.py          # Authentication endpoints
+│   └── profile.py       # User profile endpoints
 └── schemas/
-    └── auth.py          # Request/response models
+    ├── auth.py          # Auth request/response models
+    └── profile.py       # Profile request/response models
 ```
 
 ## API Endpoints
@@ -59,7 +61,14 @@ app/
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| GET | `/me` | Get current user profile | Yes |
+| GET | `/me` | Get current user info from JWT | Yes |
+
+### Profile (`/api/v1/profile`)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| GET | `/api/v1/profile` | Get current user's profile | Yes |
+| PATCH | `/api/v1/profile` | Update display name (1-50 chars) | Yes |
 
 ### Other
 

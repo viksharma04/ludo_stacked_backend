@@ -81,3 +81,25 @@ async def get_current_user(token_payload: CurrentUser) -> dict:
         "role": token_payload.get("role"),
         "aud": token_payload.get("aud"),
     }
+
+
+async def get_current_user_token(
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Depends(HTTPBearer(auto_error=False)),
+    ],
+) -> str:
+    """Get the raw JWT token from the request.
+
+    Raises HTTPException 401 if no token is provided.
+    """
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return credentials.credentials
+
+
+CurrentUserToken = Annotated[str, Depends(get_current_user_token)]
