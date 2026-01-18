@@ -10,6 +10,7 @@ from app.routers import auth, profile, ws
 from app.services.websocket.manager import get_connection_manager
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 @asynccontextmanager
@@ -31,8 +32,6 @@ async def lifespan(app: FastAPI):
     await close_redis_client()
     logger.info("WebSocket and Redis cleanup complete")
 
-
-settings = get_settings()
 
 app = FastAPI(
     title="Ludo Stacked API",
