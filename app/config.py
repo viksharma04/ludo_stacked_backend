@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     DEBUG: bool = False
 
+    # Upstash Redis
+    UPSTASH_REDIS_REST_URL: str
+    UPSTASH_REDIS_REST_TOKEN: str
+
+    # WebSocket config
+    WS_HEARTBEAT_INTERVAL: int = 30
+    WS_CONNECTION_TIMEOUT: int = 60
+
     @property
     def supabase_jwks_url(self) -> str:
         return f"{self.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
