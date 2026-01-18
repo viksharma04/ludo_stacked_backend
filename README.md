@@ -9,14 +9,26 @@ Backend for the Ludo Stacked game. Ludo Stacked is a variation of the popular ga
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
 - Supabase project with authentication enabled
+- [Upstash Redis](https://upstash.com/) database (for WebSocket state)
 
 ### Environment Setup
 
 Create a `.env` file with the following variables:
 
 ```env
+# Supabase
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_API_KEY=your-anon-key
+
+# Google OAuth (if using)
+GOOGLE_CLIENT_ID=your-client-id
+GOOGLE_CLIENT_SECRET=your-client-secret
+
+# Upstash Redis (for WebSocket state)
+UPSTASH_REDIS_REST_URL=https://your-instance.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your-token
+
+# App config
 CORS_ORIGINS=["http://localhost:3000"]
 DEBUG=true
 ```
@@ -46,13 +58,23 @@ app/
 ├── config.py            # Environment configuration
 ├── dependencies/
 │   ├── auth.py          # JWT validation via Supabase JWKS
+│   ├── redis.py         # Upstash Redis client
 │   └── supabase.py      # Supabase client (anon + authenticated)
 ├── routers/
 │   ├── auth.py          # Authentication endpoints
-│   └── profile.py       # User profile endpoints
-└── schemas/
-    ├── auth.py          # Auth request/response models
-    └── profile.py       # Profile request/response models
+│   ├── profile.py       # User profile endpoints
+│   └── ws.py            # WebSocket endpoint
+├── schemas/
+│   ├── auth.py          # Auth request/response models
+│   ├── profile.py       # Profile request/response models
+│   └── ws.py            # WebSocket message models
+└── services/
+    └── websocket/
+        ├── auth.py      # WebSocket JWT validation
+        └── manager.py   # Connection state manager
+docs/
+├── redis.md             # Redis integration guide
+└── websockets.md        # WebSocket implementation guide
 ```
 
 ## API Endpoints
@@ -69,6 +91,14 @@ app/
 |--------|----------|-------------|---------------|
 | GET | `/api/v1/profile` | Get current user's profile | Yes |
 | PATCH | `/api/v1/profile` | Update display name (1-50 chars) | Yes |
+
+### WebSocket (`/api/v1/ws`)
+
+| Endpoint | Description | Auth |
+|----------|-------------|------|
+| `ws://host/api/v1/ws?token=<jwt>` | Real-time connection | JWT in query param |
+
+See [docs/websockets.md](docs/websockets.md) for protocol details.
 
 ### Other
 
