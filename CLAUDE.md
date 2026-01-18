@@ -48,7 +48,7 @@ FastAPI backend using Supabase for authentication and database. Python 3.12+, ma
 - **Endpoint**: `ws://host/api/v1/ws?token=<jwt>` - validates JWT before accepting connection
 - **Connection Manager** (`app/services/websocket/manager.py`): Tracks connections locally and in Redis for distributed state
 - **Message Protocol**: JSON messages with `type` field (`ping`, `pong`, `connected`, `error`)
-- **Redis Keys**: `ws:active_users` (Set of online user IDs)
+- **Redis Keys**: `ws:user:{user_id}:conn_count` (atomic counter for presence tracking)
 
 See `docs/websockets.md` and `docs/redis.md` for detailed documentation.
 

@@ -3,7 +3,7 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import WebSocket
 from upstash_redis.asyncio import Redis
@@ -27,8 +27,8 @@ class Connection:
     connection_id: str
     websocket: WebSocket
     user_id: str
-    connected_at: datetime = field(default_factory=datetime.utcnow)
-    last_heartbeat: datetime = field(default_factory=datetime.utcnow)
+    connected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_heartbeat: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ConnectionManager:
@@ -39,9 +39,7 @@ class ConnectionManager:
         - _user_connections: user_id -> set of connection_ids
 
     Redis keys:
-        - ws:conn:{connection_id} (Hash) - connection metadata
-        - ws:user:{user_id}:connections (Set) - user's connection IDs
-        - ws:active_users (Set) - all online user IDs
+        - ws:user:{user_id}:conn_count (Integer) - atomic connection counter for presence tracking
     """
 
     def __init__(self, redis_client: Redis | None = None, server_id: str | None = None):
@@ -62,8 +60,8 @@ class ConnectionManager:
     def server_id(self) -> str:
         return self._server_id
 
-    def _redis_active_users_key(self) -> str:
-        return "ws:active_users"
+    def _redis_user_conn_count_key(self, user_id: str) -> str:
+        return f"ws:user:{user_id}:conn_count"
 
     async def connect(self, websocket: WebSocket, user_id: str) -> Connection:
         """Register a new WebSocket connection.
@@ -76,7 +74,7 @@ class ConnectionManager:
             The created Connection object.
         """
         connection_id = str(uuid.uuid4())
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         connection = Connection(
             connection_id=connection_id,
@@ -92,11 +90,11 @@ class ConnectionManager:
             self._user_connections[user_id] = set()
         self._user_connections[user_id].add(connection_id)
 
-        # Redis: track user as online
+        # Redis: increment user's connection count (atomic operation for multi-server safety)
         try:
-            await self._redis.sadd(self._redis_active_users_key(), user_id)
+            await self._redis.incr(self._redis_user_conn_count_key(user_id))
         except Exception as e:
-            logger.error("Failed to mark user %s online in Redis: %s", user_id, e)
+            logger.error("Failed to increment connection count for user %s in Redis: %s", user_id, e)
 
         logger.info(
             "Connection %s established for user %s on server %s",
@@ -138,11 +136,15 @@ class ConnectionManager:
             self._user_connections[user_id].discard(connection_id)
             if not self._user_connections[user_id]:
                 del self._user_connections[user_id]
-                # User has no more connections on this server - remove from Redis
-                try:
-                    await self._redis.srem(self._redis_active_users_key(), user_id)
-                except Exception as e:
-                    logger.error("Failed to mark user %s offline in Redis: %s", user_id, e)
+
+        # Redis: decrement user's connection count (atomic operation for multi-server safety)
+        try:
+            count = await self._redis.decr(self._redis_user_conn_count_key(user_id))
+            # Clean up the key when count reaches 0 to avoid stale keys
+            if count is not None and int(count) <= 0:
+                await self._redis.delete(self._redis_user_conn_count_key(user_id))
+        except Exception as e:
+            logger.error("Failed to decrement connection count for user %s in Redis: %s", user_id, e)
 
         logger.info("Connection %s disconnected for user %s", connection_id, user_id)
 
@@ -154,16 +156,17 @@ class ConnectionManager:
         """
         connection = self._connections.get(connection_id)
         if connection:
-            connection.last_heartbeat = datetime.utcnow()
+            connection.last_heartbeat = datetime.now(timezone.utc)
             logger.debug("Heartbeat updated for connection %s", connection_id)
 
     async def cleanup_stale_connections(self) -> None:
         """Remove connections that have exceeded the timeout period."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         timeout = self._settings.WS_CONNECTION_TIMEOUT
         stale_connections = []
 
-        for conn_id, connection in self._connections.items():
+        # Snapshot the connections to avoid RuntimeError if dict is modified during iteration
+        for conn_id, connection in list(self._connections.items()):
             elapsed = (now - connection.last_heartbeat).total_seconds()
             if elapsed > timeout:
                 stale_connections.append(conn_id)
@@ -298,7 +301,8 @@ class ConnectionManager:
             True if user has at least one active connection.
         """
         try:
-            return await self._redis.sismember(self._redis_active_users_key(), user_id)
+            count = await self._redis.get(self._redis_user_conn_count_key(user_id))
+            return count is not None and int(count) > 0
         except Exception as e:
             logger.error("Failed to check user online status in Redis: %s", e)
             # Fall back to local check

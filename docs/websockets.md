@@ -118,15 +118,15 @@ The WebSocket system provides:
 
 ## Redis State
 
-Redis stores minimal state for user presence tracking.
+Redis stores minimal state for user presence tracking using atomic counters.
 
 ### Keys
 
 | Key Pattern | Type | Description |
 |-------------|------|-------------|
-| `ws:active_users` | Set | All currently online user IDs |
+| `ws:user:{user_id}:conn_count` | Integer | Atomic connection counter for a user |
 
-Connection details and heartbeats are tracked locally per server. Redis is only used for the `is_user_online()` check which needs to work across potential future multi-server deployments.
+Connection details and heartbeats are tracked locally per server. Redis uses atomic `INCR`/`DECR` operations on connection counters to safely track presence across multi-server deployments. When a user's count reaches 0, the key is deleted.
 
 ## Configuration
 

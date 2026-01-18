@@ -2,6 +2,7 @@ import logging
 import sys
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,21 @@ class Settings(BaseSettings):
 
     # WebSocket config
     WS_HEARTBEAT_INTERVAL: int = 30
-    WS_CONNECTION_TIMEOUT: int = 60
+    WS_CONNECTION_TIMEOUT: int = 120
+
+    @field_validator("UPSTASH_REDIS_REST_URL")
+    @classmethod
+    def validate_redis_url(cls, v: str) -> str:
+        if not v.startswith("https://"):
+            raise ValueError("UPSTASH_REDIS_REST_URL must be a valid HTTPS URL")
+        return v
+
+    @field_validator("UPSTASH_REDIS_REST_TOKEN")
+    @classmethod
+    def validate_redis_token(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("UPSTASH_REDIS_REST_TOKEN cannot be empty")
+        return v
 
     @property
     def supabase_jwks_url(self) -> str:
