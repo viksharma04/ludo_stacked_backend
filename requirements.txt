@@ -74,6 +74,7 @@ httpx==0.28.1
     #   supabase
     #   supabase-auth
     #   supabase-functions
+    #   upstash-redis
 hyperframe==6.1.0
     # via h2
 idna==3.11
@@ -159,6 +160,7 @@ rich-toolkit==0.17.1
     #   fastapi-cloud-cli
 rignore==0.7.6
     # via fastapi-cloud-cli
+ruff==0.14.13
 sentry-sdk==2.49.0
     # via fastapi-cloud-cli
 shellingham==1.5.4
@@ -203,6 +205,8 @@ typing-inspection==0.4.2
     # via
     #   pydantic
     #   pydantic-settings
+upstash-redis==1.5.0
+    # via ludo-stacked-backend
 urllib3==2.6.3
     # via
     #   requests
