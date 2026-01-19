@@ -44,6 +44,25 @@ class RoomService:
     def _redis_room_seats_key(self, room_id: str) -> str:
         return f"room:{room_id}:seats"
 
+    def _get_user_display_name(self, user_id: str) -> str:
+        """Fetch user's display_name from the profiles table.
+
+        Returns empty string if profile not found or on error.
+        """
+        try:
+            response = (
+                self._supabase.table("profiles")
+                .select("display_name")
+                .eq("id", user_id)
+                .single()
+                .execute()
+            )
+            if response.data and response.data.get("display_name"):
+                return response.data["display_name"]
+        except Exception as e:
+            logger.warning("Failed to fetch display_name for user %s: %s", user_id, e)
+        return ""
+
     async def create_room(
         self,
         user_id: str,
@@ -116,10 +135,10 @@ class RoomService:
             # Extract room data
             data = result.get("data", {})
             room_id = str(data.get("room_id"))
-            code = data.get("code")
+            code = str(data.get("code", ""))
             seat_index = data.get("seat_index")
             is_host = data.get("is_host")
-            cached = result.get("cached", False)
+            cached = bool(result.get("cached", False))
 
             logger.info(
                 "Room created: room_id=%s, code=%s, user=%s, cached=%s",
@@ -131,9 +150,13 @@ class RoomService:
 
             # Initialize Redis state only for non-cached (new) rooms
             if not cached:
+                # Fetch owner's display_name for the seat data
+                display_name = self._get_user_display_name(user_id)
+
                 await self._initialize_redis_state(
                     room_id=room_id,
                     owner_user_id=user_id,
+                    owner_display_name=display_name,
                     code=code,
                     visibility=visibility,
                     max_players=max_players,
@@ -162,6 +185,7 @@ class RoomService:
         self,
         room_id: str,
         owner_user_id: str,
+        owner_display_name: str,
         code: str,
         visibility: str,
         max_players: int,
@@ -204,7 +228,7 @@ class RoomService:
             seat_data["seat:0"] = json.dumps(
                 {
                     "user_id": owner_user_id,
-                    "display_name": "",
+                    "display_name": owner_display_name,
                     "ready": "not_ready",
                     "connected": True,
                     "is_host": True,

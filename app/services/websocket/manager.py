@@ -257,7 +257,7 @@ class ConnectionManager:
             return False
 
         try:
-            await connection.websocket.send_json(message.model_dump(mode="json", exclude_none=True))
+            await connection.websocket.send_json(message.model_dump(mode="json"))
             return True
         except Exception as e:
             logger.warning("Failed to send to connection %s: %s", connection_id, e)

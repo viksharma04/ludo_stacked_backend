@@ -49,6 +49,8 @@ The WebSocket system provides:
 
 ## Message Protocol
 
+**Note:** Server responses include all fields defined in the schema. Optional fields will be `null` when not applicable (e.g., `error: null`, `code: null` on success messages). Clients should handle `null` values appropriately.
+
 ### Client → Server
 
 **Ping (keepalive)**
