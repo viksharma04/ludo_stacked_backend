@@ -89,17 +89,46 @@ async def lifespan(app: FastAPI):
     await close_redis_client()
 ```
 
-## Current Usage: User Presence
+## Current Usage
 
-Redis tracks which users are currently online for presence features.
+### User Presence
 
-### Key Schema
+Redis tracks user online status using atomic counters.
 
-| Key | Type | TTL | Purpose |
-|-----|------|-----|---------|
-| `ws:active_users` | Set | None | All online user IDs |
+| Key Pattern | Type | TTL | Purpose |
+|-------------|------|-----|---------|
+| `ws:user:{user_id}:conn_count` | Integer | None | Connection count per user |
 
-Connection details and heartbeats are managed locally per server instance. Redis is kept minimal - only storing what's needed for cross-server queries (user online status).
+Connection details and heartbeats are managed locally per server instance. Redis uses atomic `INCR`/`DECR` for safe multi-server presence tracking.
+
+### Room State
+
+Room state is cached in Redis for fast access during gameplay.
+
+| Key Pattern | Type | TTL | Purpose |
+|-------------|------|-----|---------|
+| `room:{room_id}:meta` | Hash | None | Room metadata |
+| `room:{room_id}:seats` | Hash | None | Seat occupancy and player info |
+
+**`room:{room_id}:meta` fields:**
+- `status` - Room status (open, in_game, closed)
+- `visibility` - Room visibility (private, public)
+- `owner_user_id` - Room creator's user ID
+- `code` - 6-character join code
+- `max_players` - Maximum players (2-4)
+- `ruleset_id` - Game ruleset identifier
+- `ruleset_config` - JSON string of ruleset configuration
+- `created_at_ms` - Creation timestamp (milliseconds)
+- `version` - Optimistic locking version
+
+**`room:{room_id}:seats` fields:**
+- `seat:0` through `seat:3` - JSON string per seat containing:
+  - `user_id` - Occupying user's ID (empty string if vacant)
+  - `display_name` - Player display name
+  - `ready` - Ready status (not_ready, ready)
+  - `connected` - Whether player is connected
+  - `is_host` - Whether this seat is the host
+  - `joined_at_ms` - Join timestamp (milliseconds)
 
 ## Error Handling
 

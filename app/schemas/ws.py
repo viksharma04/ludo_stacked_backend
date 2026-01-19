@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +12,9 @@ class MessageType(str, Enum):
     PONG = "pong"
     CONNECTED = "connected"
     ERROR = "error"
+    CREATE_ROOM = "create_room"
+    CREATE_ROOM_OK = "create_room_ok"
+    CREATE_ROOM_ERROR = "create_room_error"
 
 
 class WSCloseCode:
@@ -64,3 +67,28 @@ class PongPayload(BaseModel):
     """Payload for the 'pong' message."""
 
     server_time: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CreateRoomPayload(BaseModel):
+    """Payload for the 'create_room' message from client."""
+
+    visibility: Literal["private"]
+    max_players: int = Field(ge=2, le=4, default=4)
+    ruleset_id: Literal["classic"]
+    ruleset_config: dict[str, Any] = Field(default_factory=dict)
+
+
+class CreateRoomOkPayload(BaseModel):
+    """Payload for the 'create_room_ok' message to client."""
+
+    room_id: str
+    code: str
+    seat_index: int
+    is_host: bool
+
+
+class CreateRoomErrorPayload(BaseModel):
+    """Payload for the 'create_room_error' message to client."""
+
+    error_code: str
+    message: str

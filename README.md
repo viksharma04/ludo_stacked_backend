@@ -69,12 +69,17 @@ app/
 │   ├── profile.py       # Profile request/response models
 │   └── ws.py            # WebSocket message models
 └── services/
+    ├── room/
+    │   └── service.py   # Room creation via Supabase RPC
     └── websocket/
         ├── auth.py      # WebSocket JWT validation
         └── manager.py   # Connection state manager
 docs/
 ├── redis.md             # Redis integration guide
 └── websockets.md        # WebSocket implementation guide
+specs/
+├── room_creation_feature.md      # Backend room creation spec
+└── frontend_room_creation.md     # Frontend room creation spec
 ```
 
 ## API Endpoints
@@ -97,6 +102,16 @@ docs/
 | Endpoint | Description | Auth |
 |----------|-------------|------|
 | `ws://host/api/v1/ws?token=<jwt>` | Real-time connection | JWT in query param |
+
+**Supported Message Types:**
+
+| Type | Direction | Description |
+|------|-----------|-------------|
+| `ping` / `pong` | Client ↔ Server | Keepalive heartbeat |
+| `connected` | Server → Client | Connection acknowledgment |
+| `create_room` | Client → Server | Create a new game room |
+| `create_room_ok` | Server → Client | Room created successfully |
+| `create_room_error` | Server → Client | Room creation failed |
 
 See [docs/websockets.md](docs/websockets.md) for protocol details.
 

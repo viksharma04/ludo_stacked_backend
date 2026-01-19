@@ -33,9 +33,10 @@ FastAPI backend using Supabase for authentication and database. Python 3.12+, ma
 - **`app/dependencies/supabase.py`** - Supabase client: `get_supabase_client()` (anon) and `get_authenticated_supabase_client(token)` (with user JWT for RLS)
 - **`app/dependencies/redis.py`** - Upstash Redis client singleton: `get_redis_client()` and `close_redis_client()`
 - **`app/routers/`** - API route handlers (prefixed with `/api/v1`)
-- **`app/routers/ws.py`** - WebSocket endpoint with JWT auth and ping/pong handling
+- **`app/routers/ws.py`** - WebSocket endpoint with JWT auth, ping/pong, and room operations
 - **`app/schemas/`** - Pydantic models for request/response validation
-- **`app/services/websocket/`** - WebSocket infrastructure (auth, connection manager)
+- **`app/services/websocket/`** - WebSocket infrastructure (auth, connection manager with room subscriptions)
+- **`app/services/room/`** - Room service for creating and managing game rooms via Supabase RPC
 
 ### Authentication Flow
 
@@ -56,11 +57,24 @@ FastAPI backend using Supabase for authentication and database. Python 3.12+, ma
 ### WebSocket Architecture
 
 - **Endpoint**: `ws://host/api/v1/ws?token=<jwt>` - validates JWT before accepting connection
-- **Connection Manager** (`app/services/websocket/manager.py`): Tracks connections locally and in Redis for distributed state
-- **Message Protocol**: JSON messages with `type` field (`ping`, `pong`, `connected`, `error`)
-- **Redis Keys**: `ws:user:{user_id}:conn_count` (atomic counter for presence tracking)
+- **Connection Manager** (`app/services/websocket/manager.py`): Tracks connections locally and in Redis for distributed state, manages room subscriptions
+- **Message Protocol**: JSON messages with `type` field:
+  - Core: `ping`, `pong`, `connected`, `error`
+  - Room: `create_room`, `create_room_ok`, `create_room_error`
+- **Redis Keys**:
+  - `ws:user:{user_id}:conn_count` - atomic counter for presence tracking
+  - `room:{room_id}:meta` - room metadata hash
+  - `room:{room_id}:seats` - seat occupancy hash
 
 See `docs/websockets.md` and `docs/redis.md` for detailed documentation.
+
+### Room Operations
+
+Room creation uses a Supabase RPC stored procedure (`create_room`) for atomic operations:
+- Idempotency via `ws_idempotency` table (request_id must be UUID)
+- Unique 6-character room code generation with collision retry
+- Creates room record and 4 seat records in single transaction
+- Redis state initialized after successful DB commit (best-effort)
 
 ### Adding New Features
 

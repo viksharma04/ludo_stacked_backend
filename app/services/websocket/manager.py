@@ -13,7 +13,6 @@ from app.dependencies.redis import get_redis_client
 from app.schemas.ws import (
     ConnectedPayload,
     MessageType,
-    PongPayload,
     WSServerMessage,
 )
 
@@ -29,6 +28,7 @@ class Connection:
     user_id: str
     connected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_heartbeat: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    room_id: str | None = None
 
 
 class ConnectionManager:
@@ -50,6 +50,7 @@ class ConnectionManager:
         # Local storage
         self._connections: dict[str, Connection] = {}
         self._user_connections: dict[str, set[str]] = {}
+        self._room_connections: dict[str, set[str]] = {}  # room_id -> connection_ids
 
         # Cleanup task
         self._cleanup_task: asyncio.Task | None = None
@@ -130,6 +131,10 @@ class ConnectionManager:
             return
 
         user_id = connection.user_id
+
+        # Unsubscribe from room if subscribed
+        if connection.room_id:
+            await self._unsubscribe_from_room_internal(connection_id, connection.room_id)
 
         # Remove from local user connections
         if user_id in self._user_connections:
@@ -290,6 +295,95 @@ class ConnectionManager:
             if await self.send_to_connection(conn_id, message):
                 sent += 1
         return sent
+
+    async def subscribe_to_room(self, connection_id: str, room_id: str) -> None:
+        """Subscribe a connection to a room for receiving room messages.
+
+        Args:
+            connection_id: The connection to subscribe.
+            room_id: The room to subscribe to.
+        """
+        connection = self._connections.get(connection_id)
+        if connection is None:
+            logger.warning("Connection %s not found for room subscription", connection_id)
+            return
+
+        # Unsubscribe from current room if any
+        if connection.room_id and connection.room_id != room_id:
+            await self._unsubscribe_from_room_internal(connection_id, connection.room_id)
+
+        # Subscribe to new room
+        connection.room_id = room_id
+        if room_id not in self._room_connections:
+            self._room_connections[room_id] = set()
+        self._room_connections[room_id].add(connection_id)
+
+        logger.info("Connection %s subscribed to room %s", connection_id, room_id)
+
+    async def unsubscribe_from_room(self, connection_id: str) -> None:
+        """Unsubscribe a connection from its current room.
+
+        Args:
+            connection_id: The connection to unsubscribe.
+        """
+        connection = self._connections.get(connection_id)
+        if connection is None or connection.room_id is None:
+            return
+
+        await self._unsubscribe_from_room_internal(connection_id, connection.room_id)
+        connection.room_id = None
+
+    async def _unsubscribe_from_room_internal(self, connection_id: str, room_id: str) -> None:
+        """Internal method to remove a connection from room tracking.
+
+        Does not modify connection.room_id - caller is responsible for that.
+        """
+        if room_id in self._room_connections:
+            self._room_connections[room_id].discard(connection_id)
+            if not self._room_connections[room_id]:
+                del self._room_connections[room_id]
+        logger.debug("Connection %s unsubscribed from room %s", connection_id, room_id)
+
+    async def send_to_room(
+        self, room_id: str, message: WSServerMessage, exclude_connection: str | None = None
+    ) -> int:
+        """Send a message to all connections in a room on this server.
+
+        Args:
+            room_id: The target room.
+            message: The message to send.
+            exclude_connection: Optional connection ID to exclude from sending.
+
+        Returns:
+            Number of connections the message was sent to.
+        """
+        conn_ids = self._room_connections.get(room_id, set())
+        sent = 0
+        for conn_id in list(conn_ids):
+            if conn_id == exclude_connection:
+                continue
+            if await self.send_to_connection(conn_id, message):
+                sent += 1
+        return sent
+
+    async def publish_room_event(self, room_id: str, event_type: str, payload: dict) -> None:
+        """Publish a room event to Redis for cross-server distribution.
+
+        Note: This is a placeholder for future Redis pub/sub implementation.
+        Currently just logs the event - cross-server messaging not yet implemented.
+
+        Args:
+            room_id: The room the event is for.
+            event_type: The type of event.
+            payload: The event payload.
+        """
+        # TODO: Implement Redis pub/sub for cross-server room events
+        logger.debug(
+            "Room event (local only): room=%s, type=%s, payload=%s",
+            room_id,
+            event_type,
+            payload,
+        )
 
     async def is_user_online(self, user_id: str) -> bool:
         """Check if a user has any active connections across all servers.
