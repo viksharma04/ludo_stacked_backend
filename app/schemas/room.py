@@ -36,3 +36,28 @@ class CreateRoomResponse(BaseModel):
         ...,
         description="True if returning existing room, False if newly created",
     )
+
+
+class JoinRoomRequest(BaseModel):
+    """Request body for joining a room."""
+
+    code: str = Field(
+        ...,
+        min_length=6,
+        max_length=6,
+        pattern=r"^[A-Z0-9]{6}$",
+        description="6-character room code",
+    )
+
+
+class JoinRoomResponse(BaseModel):
+    """Response from joining a room."""
+
+    room_id: str = Field(..., description="UUID of the room")
+    code: str = Field(
+        ...,
+        min_length=6,
+        max_length=6,
+        description="6-character room code",
+    )
+    seat: SeatInfo = Field(..., description="User's seat information")

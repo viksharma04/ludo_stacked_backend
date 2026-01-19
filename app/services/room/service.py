@@ -64,6 +64,29 @@ class CreateRoomResult:
     error_message: str | None = None
 
 
+@dataclass
+class ToggleReadyResult:
+    """Result of toggle_ready operation."""
+
+    success: bool
+    new_ready_state: str | None = None
+    room_status_changed: bool = False
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+@dataclass
+class LeaveRoomResult:
+    """Result of leave_room operation."""
+
+    success: bool
+    was_host: bool = False
+    room_closed: bool = False
+    room_snapshot: RoomSnapshotData | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
 class RoomService:
     """Service for managing game rooms.
 
@@ -385,8 +408,8 @@ class RoomService:
                 }
             )
 
-            # Seats 1-3 are empty
-            for i in range(1, 4):
+            # Remaining seats are empty (seats 1 through max_players-1)
+            for i in range(1, max_players):
                 seat_data[f"seat:{i}"] = json.dumps({})
 
             await self._redis.hset(seats_key, values=seat_data)
@@ -417,9 +440,12 @@ class RoomService:
                 logger.warning("Room %s not found in Redis", room_id)
                 return None
 
+            # Parse max_players for seat count
+            max_players = int(meta.get("max_players", 4))
+
             # Parse seats
             seats: list[SeatData] = []
-            for i in range(4):
+            for i in range(max_players):
                 seat_key = f"seat:{i}"
                 seat_json = seats_raw.get(seat_key, "{}")
                 try:
@@ -446,7 +472,7 @@ class RoomService:
                 status=meta.get("status", "unknown"),
                 visibility=meta.get("visibility", "private"),
                 ruleset_id=meta.get("ruleset_id", "classic"),
-                max_players=int(meta.get("max_players", 4)),
+                max_players=max_players,
                 seats=seats,
                 version=int(meta.get("version", 0)),
             )
@@ -499,7 +525,7 @@ class RoomService:
         try:
             response = (
                 self._supabase.table("room_seats")
-                .select("id")
+                .select("room_id")
                 .eq("room_id", room_id)
                 .eq("user_id", user_id)
                 .limit(1)
@@ -509,6 +535,52 @@ class RoomService:
         except Exception as e:
             logger.warning("Error checking room membership for user %s: %s", user_id, e)
             return False
+
+    def validate_room_access(self, user_id: str, room_code: str) -> tuple[str | None, str | None]:
+        """Validate user can access room via WebSocket.
+
+        Checks that:
+        1. Room exists with given code and is not closed
+        2. User has a seat in the room
+
+        Args:
+            user_id: The user attempting to access.
+            room_code: The 6-character room code.
+
+        Returns:
+            Tuple of (room_id, error_code). One will always be None.
+            - On success: (room_id, None)
+            - On failure: (None, error_code)
+
+        Error codes:
+            - ROOM_NOT_FOUND: Room code doesn't exist or room is closed
+            - ROOM_ACCESS_DENIED: User doesn't have a seat in the room
+        """
+        try:
+            # 1. Find room by code (must be open or in_game)
+            response = (
+                self._supabase.table("rooms")
+                .select("room_id, status")
+                .eq("code", room_code.upper())
+                .in_("status", ["open", "in_game"])
+                .single()
+                .execute()
+            )
+
+            if not response.data:
+                return None, "ROOM_NOT_FOUND"
+
+            room_id = str(response.data["room_id"])
+
+            # 2. Check user has a seat in the room
+            if not self._is_user_room_member(room_id, user_id):
+                return None, "ROOM_ACCESS_DENIED"
+
+            return room_id, None
+
+        except Exception as e:
+            logger.warning("Error validating room access for code %s: %s", room_code, e)
+            return None, "ROOM_NOT_FOUND"
 
     async def join_room(self, user_id: str, room_code: str) -> JoinRoomResult:
         """Join a room and allocate a seat.
@@ -690,6 +762,254 @@ class RoomService:
             except json.JSONDecodeError:
                 pass
 
+    async def _update_seat_ready(self, room_id: str, seat_index: int, ready_state: str) -> None:
+        """Update the ready status of a seat in Redis."""
+        seats_key = self._redis_room_seats_key(room_id)
+        seat_json = await self._redis.hget(seats_key, f"seat:{seat_index}")
+        if seat_json:
+            try:
+                seat_data = json.loads(seat_json)
+                seat_data["ready"] = ready_state
+                await self._redis.hset(seats_key, f"seat:{seat_index}", json.dumps(seat_data))
+            except json.JSONDecodeError:
+                pass
+
+    async def _check_all_ready(self, room_id: str) -> bool:
+        """Check if all occupied seats are ready with minimum 2 players.
+
+        Returns True if:
+        - At least 2 players are seated
+        - All seated players have ready="ready"
+        """
+        snapshot = await self.get_room_snapshot(room_id)
+        if not snapshot:
+            return False
+
+        occupied_seats = [s for s in snapshot.seats if s.user_id is not None]
+        if len(occupied_seats) < 2:
+            return False
+
+        return all(s.ready == "ready" for s in occupied_seats)
+
+    async def _update_room_status(self, room_id: str, status: str) -> None:
+        """Update the room status in Redis."""
+        meta_key = self._redis_room_meta_key(room_id)
+        await self._redis.hset(meta_key, "status", status)
+
+    async def _increment_room_version(self, room_id: str) -> int:
+        """Increment the room version counter and return the new version."""
+        meta_key = self._redis_room_meta_key(room_id)
+        new_version = await self._redis.hincrby(meta_key, "version", 1)
+        return int(new_version) if new_version else 0
+
+    async def update_seat_connected_by_user(
+        self, room_id: str, user_id: str, connected: bool
+    ) -> None:
+        """Update connected status for a user's seat in a room.
+
+        Finds the seat occupied by the user and updates its connected status.
+
+        Args:
+            room_id: The room ID.
+            user_id: The user whose seat to update.
+            connected: Whether the user is connected.
+        """
+        try:
+            # Get room snapshot to find user's seat
+            snapshot = await self.get_room_snapshot(room_id)
+            if not snapshot:
+                logger.warning("Room %s not found for seat connected update", room_id)
+                return
+
+            # Find user's seat
+            for seat in snapshot.seats:
+                if seat.user_id == user_id:
+                    await self._update_seat_connected(room_id, seat.seat_index, connected)
+                    logger.debug(
+                        "Updated connected=%s for user %s in room %s seat %d",
+                        connected,
+                        user_id,
+                        room_id,
+                        seat.seat_index,
+                    )
+                    return
+
+            logger.warning("User %s not found in room %s for connected update", user_id, room_id)
+
+        except Exception as e:
+            logger.error(
+                "Error updating seat connected for user %s in room %s: %s",
+                user_id,
+                room_id,
+                e,
+            )
+
+    async def toggle_ready(self, room_id: str, user_id: str) -> ToggleReadyResult:
+        """Toggle ready state for a user in a room.
+
+        Logic:
+        1. Get room snapshot
+        2. Find user's seat (error if not seated)
+        3. Check room status is "open" or "ready_to_start" (error if in_game/closed)
+        4. Toggle: "not_ready" <-> "ready"
+        5. Update seat in Redis
+        6. Check if all occupied seats ready (with min 2 players)
+        7. Update room status: all_ready -> "ready_to_start", not all_ready -> "open"
+        8. Increment room version
+        9. Return result
+
+        Args:
+            room_id: The room to toggle ready in.
+            user_id: The user toggling ready.
+
+        Returns:
+            ToggleReadyResult with new ready state and whether room status changed.
+        """
+        try:
+            # Get room snapshot
+            snapshot = await self.get_room_snapshot(room_id)
+            if not snapshot:
+                return ToggleReadyResult(
+                    success=False,
+                    error_code="ROOM_NOT_FOUND",
+                    error_message="Room not found",
+                )
+
+            # Find user's seat
+            user_seat = None
+            for seat in snapshot.seats:
+                if seat.user_id == user_id:
+                    user_seat = seat
+                    break
+
+            if user_seat is None:
+                return ToggleReadyResult(
+                    success=False,
+                    error_code="NOT_SEATED",
+                    error_message="You don't have a seat in this room",
+                )
+
+            # Check room status allows ready toggle
+            if snapshot.status not in ("open", "ready_to_start"):
+                return ToggleReadyResult(
+                    success=False,
+                    error_code="INVALID_ROOM_STATE",
+                    error_message=f"Cannot toggle ready in room with status '{snapshot.status}'",
+                )
+
+            # Toggle ready state
+            new_ready_state = "ready" if user_seat.ready == "not_ready" else "not_ready"
+
+            # Update seat in Redis
+            await self._update_seat_ready(room_id, user_seat.seat_index, new_ready_state)
+
+            # Check if all occupied seats are ready
+            all_ready = await self._check_all_ready(room_id)
+
+            # Determine new room status
+            old_status = snapshot.status
+            new_status = "ready_to_start" if all_ready else "open"
+            room_status_changed = old_status != new_status
+
+            # Update room status if changed
+            if room_status_changed:
+                await self._update_room_status(room_id, new_status)
+
+            # Increment room version
+            await self._increment_room_version(room_id)
+
+            logger.info(
+                "User %s toggled ready to %s in room %s (room status: %s -> %s)",
+                user_id,
+                new_ready_state,
+                room_id,
+                old_status,
+                new_status,
+            )
+
+            return ToggleReadyResult(
+                success=True,
+                new_ready_state=new_ready_state,
+                room_status_changed=room_status_changed,
+            )
+
+        except Exception as e:
+            logger.exception(
+                "Error toggling ready for user %s in room %s: %s",
+                user_id,
+                room_id,
+                e,
+            )
+            return ToggleReadyResult(
+                success=False,
+                error_code="INTERNAL_ERROR",
+                error_message="Failed to toggle ready state",
+            )
+
+    async def reset_ready_on_disconnect(self, room_id: str, user_id: str) -> bool:
+        """Reset ready state for a user when they disconnect.
+
+        Also checks if room status needs to revert to "open" if it was "ready_to_start".
+
+        Args:
+            room_id: The room the user disconnected from.
+            user_id: The user who disconnected.
+
+        Returns:
+            True if the room state was modified and a broadcast is needed.
+        """
+        try:
+            # Get room snapshot
+            snapshot = await self.get_room_snapshot(room_id)
+            if not snapshot:
+                return False
+
+            # Find user's seat
+            user_seat = None
+            for seat in snapshot.seats:
+                if seat.user_id == user_id:
+                    user_seat = seat
+                    break
+
+            if user_seat is None:
+                return False
+
+            # Only reset if user was actually ready
+            if user_seat.ready != "ready":
+                return False
+
+            # Reset ready state
+            await self._update_seat_ready(room_id, user_seat.seat_index, "not_ready")
+
+            # Check if room status needs to revert
+            if snapshot.status == "ready_to_start":
+                await self._update_room_status(room_id, "open")
+                logger.info(
+                    "Room %s reverted to 'open' after user %s disconnected",
+                    room_id,
+                    user_id,
+                )
+
+            # Increment room version
+            await self._increment_room_version(room_id)
+
+            logger.info(
+                "Reset ready state for user %s in room %s on disconnect",
+                user_id,
+                room_id,
+            )
+
+            return True
+
+        except Exception as e:
+            logger.exception(
+                "Error resetting ready for user %s in room %s: %s",
+                user_id,
+                room_id,
+                e,
+            )
+            return False
+
     async def remove_presence(self, user_id: str, room_id: str) -> None:
         """Remove user presence from a room."""
         try:
@@ -702,6 +1022,181 @@ class RoomService:
                 user_id,
                 room_id,
                 e,
+            )
+
+    def _close_room_in_db(self, room_id: str) -> bool:
+        """Set room status to 'closed' in the database.
+
+        Returns True if successful, False otherwise.
+        """
+        try:
+            response = (
+                self._supabase.table("rooms")
+                .update({"status": "closed"})
+                .eq("room_id", room_id)
+                .execute()
+            )
+            if response.data and len(response.data) > 0:
+                logger.info("Room %s closed in DB", room_id)
+                return True
+            logger.warning("Room %s not found or already closed in DB", room_id)
+            return False
+        except Exception as e:
+            logger.exception("Error closing room %s in DB: %s", room_id, e)
+            return False
+
+    def _clear_seat_in_db(self, room_id: str, seat_index: int) -> bool:
+        """Clear a seat in the database (set user_id to null).
+
+        Returns True if successful, False otherwise.
+        """
+        try:
+            response = (
+                self._supabase.table("room_seats")
+                .update({"user_id": None})
+                .eq("room_id", room_id)
+                .eq("seat_index", seat_index)
+                .execute()
+            )
+            if response.data and len(response.data) > 0:
+                logger.debug("Seat %d in room %s cleared in DB", seat_index, room_id)
+                return True
+            logger.warning("Seat %d in room %s not found in DB", seat_index, room_id)
+            return False
+        except Exception as e:
+            logger.exception("Error clearing seat %d in room %s: %s", seat_index, room_id, e)
+            return False
+
+    async def _clear_seat_in_redis(self, room_id: str, seat_index: int) -> None:
+        """Clear a seat in Redis (set to empty object)."""
+        seats_key = self._redis_room_seats_key(room_id)
+        await self._redis.hset(seats_key, f"seat:{seat_index}", json.dumps({}))
+        logger.debug("Seat %d in room %s cleared in Redis", seat_index, room_id)
+
+    async def _delete_room_redis(self, room_id: str) -> None:
+        """Delete all Redis keys for a room."""
+        try:
+            meta_key = self._redis_room_meta_key(room_id)
+            seats_key = self._redis_room_seats_key(room_id)
+            presence_key = f"room:{room_id}:presence"
+            await self._redis.delete(meta_key, seats_key, presence_key)
+            logger.info("Deleted Redis keys for room %s", room_id)
+        except Exception as e:
+            logger.warning("Failed to delete Redis keys for room %s: %s", room_id, e)
+
+    async def _reset_all_ready_states(self, room_id: str) -> None:
+        """Reset all seated players to 'not_ready'."""
+        snapshot = await self.get_room_snapshot(room_id)
+        if not snapshot:
+            return
+
+        for seat in snapshot.seats:
+            if seat.user_id is not None and seat.ready == "ready":
+                await self._update_seat_ready(room_id, seat.seat_index, "not_ready")
+
+        logger.debug("Reset all ready states in room %s", room_id)
+
+    async def leave_room(self, room_id: str, user_id: str) -> LeaveRoomResult:
+        """Handle a user leaving a room.
+
+        Logic:
+        1. Get room snapshot, find user's seat
+        2. Check if user is host (is_host field)
+        3. If host:
+           - Close room in DB (status = "closed")
+           - Delete all Redis keys for room
+           - Return LeaveRoomResult(was_host=True, room_closed=True)
+        4. If player:
+           - Clear seat in DB (user_id = null)
+           - Clear seat in Redis (empty object)
+           - Reset all ready states to "not_ready"
+           - If room was "ready_to_start", revert to "open"
+           - Remove from presence set
+           - Increment version
+           - Return result with updated snapshot
+
+        Args:
+            room_id: The room to leave.
+            user_id: The user leaving the room.
+
+        Returns:
+            LeaveRoomResult with operation details.
+        """
+        try:
+            # Get room snapshot
+            snapshot = await self.get_room_snapshot(room_id)
+            if not snapshot:
+                return LeaveRoomResult(
+                    success=False,
+                    error_code="ROOM_NOT_FOUND",
+                    error_message="Room not found",
+                )
+
+            # Find user's seat
+            user_seat = None
+            for seat in snapshot.seats:
+                if seat.user_id == user_id:
+                    user_seat = seat
+                    break
+
+            if user_seat is None:
+                return LeaveRoomResult(
+                    success=False,
+                    error_code="NOT_SEATED",
+                    error_message="You don't have a seat in this room",
+                )
+
+            # Check if user is host
+            if user_seat.is_host:
+                # Host is leaving - close the room
+                self._close_room_in_db(room_id)
+                await self._delete_room_redis(room_id)
+
+                logger.info("Host %s left room %s, room closed", user_id, room_id)
+
+                return LeaveRoomResult(
+                    success=True,
+                    was_host=True,
+                    room_closed=True,
+                    room_snapshot=None,
+                )
+
+            # Player is leaving - clear their seat
+            self._clear_seat_in_db(room_id, user_seat.seat_index)
+            await self._clear_seat_in_redis(room_id, user_seat.seat_index)
+
+            # Reset all ready states
+            await self._reset_all_ready_states(room_id)
+
+            # If room was "ready_to_start", revert to "open"
+            if snapshot.status == "ready_to_start":
+                await self._update_room_status(room_id, "open")
+                logger.info("Room %s reverted to 'open' after player %s left", room_id, user_id)
+
+            # Remove from presence set
+            await self.remove_presence(user_id, room_id)
+
+            # Increment version
+            await self._increment_room_version(room_id)
+
+            # Get updated snapshot
+            updated_snapshot = await self.get_room_snapshot(room_id)
+
+            logger.info("Player %s left room %s", user_id, room_id)
+
+            return LeaveRoomResult(
+                success=True,
+                was_host=False,
+                room_closed=False,
+                room_snapshot=updated_snapshot,
+            )
+
+        except Exception as e:
+            logger.exception("Error leaving room %s for user %s: %s", room_id, user_id, e)
+            return LeaveRoomResult(
+                success=False,
+                error_code="INTERNAL_ERROR",
+                error_message="Failed to leave room",
             )
 
 

@@ -19,6 +19,7 @@ DECLARE
     v_code text;
     v_attempt int := 0;
     v_max_attempts int := 10;
+    i int;
 BEGIN
     -- Check for existing open room owned by user
     SELECT room_id, code INTO v_existing_room
@@ -78,12 +79,11 @@ BEGIN
     INSERT INTO room_seats (room_id, seat_index, user_id, is_host, status, ready)
     VALUES (v_room_id, 0, p_user_id, true, 'occupied'::seat_status, 'not_ready'::ready_status);
 
-    -- Create empty seats 1-3
-    INSERT INTO room_seats (room_id, seat_index, user_id, is_host, status, ready)
-    VALUES
-        (v_room_id, 1, NULL, false, 'empty'::seat_status, 'not_ready'::ready_status),
-        (v_room_id, 2, NULL, false, 'empty'::seat_status, 'not_ready'::ready_status),
-        (v_room_id, 3, NULL, false, 'empty'::seat_status, 'not_ready'::ready_status);
+    -- Create empty seats 1 through (max_players - 1)
+    FOR i IN 1..(p_max_players - 1) LOOP
+        INSERT INTO room_seats (room_id, seat_index, user_id, is_host, status, ready)
+        VALUES (v_room_id, i, NULL, false, 'empty'::seat_status, 'not_ready'::ready_status);
+    END LOOP;
 
     RETURN jsonb_build_object(
         'success', true,

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
 from typing import Any
@@ -12,6 +14,10 @@ class MessageType(str, Enum):
     PONG = "pong"
     CONNECTED = "connected"
     ERROR = "error"
+    ROOM_UPDATED = "room_updated"
+    TOGGLE_READY = "toggle_ready"
+    LEAVE_ROOM = "leave_room"
+    ROOM_CLOSED = "room_closed"
 
 
 class WSCloseCode:
@@ -30,6 +36,8 @@ class WSCloseCode:
     # Custom application codes (4000-4999)
     AUTH_FAILED = 4001
     AUTH_EXPIRED = 4002
+    ROOM_NOT_FOUND = 4003
+    ROOM_ACCESS_DENIED = 4004
 
 
 class WSClientMessage(BaseModel):
@@ -49,33 +57,6 @@ class WSServerMessage(BaseModel):
 
 
 # --- Payload schemas ---
-
-
-class ConnectedPayload(BaseModel):
-    """Payload for the 'connected' message."""
-
-    connection_id: str
-    user_id: str
-    server_id: str
-
-
-class PongPayload(BaseModel):
-    """Payload for the 'pong' message."""
-
-    server_time: datetime = Field(default_factory=lambda: datetime.now())
-
-
-class ErrorPayload(BaseModel):
-    """Payload for error messages (ERROR, CREATE_ROOM_ERROR, JOIN_ROOM_ERROR)."""
-
-    error_code: str
-    message: str
-
-
-class JoinRoomPayload(BaseModel):
-    """Payload for the 'join_room' message from client."""
-
-    room_code: str = Field(..., min_length=6, max_length=6, pattern="^[A-Z0-9]{6}$")
 
 
 class SeatSnapshot(BaseModel):
@@ -103,3 +84,38 @@ class RoomSnapshot(BaseModel):
     max_players: int
     seats: list[SeatSnapshot]
     version: int = 0
+
+
+class ConnectedPayload(BaseModel):
+    """Payload for the 'connected' message."""
+
+    connection_id: str
+    user_id: str
+    server_id: str
+    room: RoomSnapshot
+
+
+class PongPayload(BaseModel):
+    """Payload for the 'pong' message."""
+
+    server_time: datetime = Field(default_factory=lambda: datetime.now())
+
+
+class ErrorPayload(BaseModel):
+    """Payload for error messages (ERROR, CREATE_ROOM_ERROR, JOIN_ROOM_ERROR)."""
+
+    error_code: str
+    message: str
+
+
+class RoomClosedPayload(BaseModel):
+    """Payload sent when host closes the room."""
+
+    reason: str = "host_left"
+    room_id: str
+
+
+class JoinRoomPayload(BaseModel):
+    """Payload for the 'join_room' message from client."""
+
+    room_code: str = Field(..., min_length=6, max_length=6, pattern="^[A-Z0-9]{6}$")
