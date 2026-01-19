@@ -1,16 +1,21 @@
 import logging
+import uuid
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from starlette.websockets import WebSocketState
 
 from app.schemas.ws import (
+    CreateRoomErrorPayload,
+    CreateRoomOkPayload,
+    CreateRoomPayload,
     MessageType,
     PongPayload,
     WSClientMessage,
     WSCloseCode,
     WSServerMessage,
 )
+from app.services.room import get_room_service
 from app.services.websocket.auth import WSAuthenticator
 from app.services.websocket.manager import get_connection_manager
 
@@ -100,6 +105,128 @@ async def websocket_endpoint(
                     "Ping/pong for connection %s",
                     connection.connection_id,
                 )
+
+            elif message.type == MessageType.CREATE_ROOM:
+                logger.info(
+                    "CREATE_ROOM request: connection=%s, user=%s, request_id=%s, payload=%s",
+                    connection.connection_id,
+                    user_id,
+                    message.request_id,
+                    message.payload,
+                )
+
+                # Validate request_id is required and is a valid UUID
+                if not message.request_id:
+                    await manager.send_to_connection(
+                        connection.connection_id,
+                        WSServerMessage(
+                            type=MessageType.CREATE_ROOM_ERROR,
+                            payload=CreateRoomErrorPayload(
+                                error_code="VALIDATION_ERROR",
+                                message="request_id is required",
+                            ).model_dump(),
+                        ),
+                    )
+                    continue
+
+                try:
+                    uuid.UUID(message.request_id)
+                except ValueError:
+                    await manager.send_to_connection(
+                        connection.connection_id,
+                        WSServerMessage(
+                            type=MessageType.CREATE_ROOM_ERROR,
+                            request_id=message.request_id,
+                            payload=CreateRoomErrorPayload(
+                                error_code="VALIDATION_ERROR",
+                                message="request_id must be a valid UUID",
+                            ).model_dump(),
+                        ),
+                    )
+                    continue
+
+                # Validate payload
+                try:
+                    payload = CreateRoomPayload.model_validate(message.payload or {})
+                except ValidationError as e:
+                    logger.warning(
+                        "Invalid create_room payload from connection %s: %s",
+                        connection.connection_id,
+                        e,
+                    )
+                    await manager.send_to_connection(
+                        connection.connection_id,
+                        WSServerMessage(
+                            type=MessageType.CREATE_ROOM_ERROR,
+                            request_id=message.request_id,
+                            payload=CreateRoomErrorPayload(
+                                error_code="VALIDATION_ERROR",
+                                message=str(e),
+                            ).model_dump(),
+                        ),
+                    )
+                    continue
+
+                # Call room service
+                room_service = get_room_service()
+                result = await room_service.create_room(
+                    user_id=user_id,
+                    request_id=message.request_id,
+                    visibility=payload.visibility,
+                    max_players=payload.max_players,
+                    ruleset_id=payload.ruleset_id,
+                    ruleset_config=payload.ruleset_config,
+                )
+
+                if result.success:
+                    # Subscribe connection to the room
+                    await manager.subscribe_to_room(
+                        connection.connection_id, result.room_id
+                    )
+
+                    # Send success response
+                    await manager.send_to_connection(
+                        connection.connection_id,
+                        WSServerMessage(
+                            type=MessageType.CREATE_ROOM_OK,
+                            request_id=message.request_id,
+                            payload=CreateRoomOkPayload(
+                                room_id=result.room_id,
+                                code=result.code,
+                                seat_index=result.seat_index,
+                                is_host=result.is_host,
+                            ).model_dump(),
+                        ),
+                    )
+                    logger.info(
+                        "CREATE_ROOM_OK: room_id=%s, code=%s, user=%s, connection=%s, cached=%s",
+                        result.room_id,
+                        result.code,
+                        user_id,
+                        connection.connection_id,
+                        result.cached,
+                    )
+                else:
+                    # Send error response
+                    await manager.send_to_connection(
+                        connection.connection_id,
+                        WSServerMessage(
+                            type=MessageType.CREATE_ROOM_ERROR,
+                            request_id=message.request_id,
+                            payload=CreateRoomErrorPayload(
+                                error_code=result.error_code or "INTERNAL_ERROR",
+                                message=result.error_message or "Unknown error",
+                            ).model_dump(),
+                        ),
+                    )
+                    logger.warning(
+                        "CREATE_ROOM_ERROR: error_code=%s, message=%s, user=%s, connection=%s",
+                        result.error_code,
+                        result.error_message,
+                        user_id,
+                        connection.connection_id,
+                    )
+
             else:
                 logger.debug(
                     "Unhandled message type %s from connection %s",

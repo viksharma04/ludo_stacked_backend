@@ -97,6 +97,67 @@ The WebSocket system provides:
 }
 ```
 
+## Room Operations
+
+### Create Room
+
+**Client → Server: `create_room`**
+```json
+{
+  "type": "create_room",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "visibility": "private",
+    "max_players": 4,
+    "ruleset_id": "classic",
+    "ruleset_config": {}
+  }
+}
+```
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `request_id` | UUID | Yes | Must be valid UUID v4 (for idempotency) |
+| `visibility` | string | Yes | Must be `"private"` |
+| `max_players` | number | No | 2-4, default: 4 |
+| `ruleset_id` | string | Yes | Must be `"classic"` |
+| `ruleset_config` | object | No | Default: `{}` |
+
+**Server → Client: `create_room_ok`**
+```json
+{
+  "type": "create_room_ok",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "room_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "code": "AB12CD",
+    "seat_index": 0,
+    "is_host": true
+  }
+}
+```
+
+**Server → Client: `create_room_error`**
+```json
+{
+  "type": "create_room_error",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "error_code": "VALIDATION_ERROR",
+    "message": "request_id must be a valid UUID"
+  }
+}
+```
+
+| Error Code | Description |
+|------------|-------------|
+| `VALIDATION_ERROR` | Invalid payload or request_id |
+| `REQUEST_IN_PROGRESS` | Same request_id already being processed |
+| `CODE_GENERATION_FAILED` | Could not generate unique room code |
+| `INTERNAL_ERROR` | Unexpected server error |
+
 ## Message Types
 
 | Type | Direction | Description |
@@ -105,6 +166,9 @@ The WebSocket system provides:
 | `pong` | Server → Client | Keepalive response |
 | `connected` | Server → Client | Connection acknowledgment |
 | `error` | Server → Client | Error notification |
+| `create_room` | Client → Server | Create a new game room |
+| `create_room_ok` | Server → Client | Room creation succeeded |
+| `create_room_error` | Server → Client | Room creation failed |
 
 ## Close Codes
 
@@ -209,6 +273,11 @@ count = await manager.broadcast(message)
 # Get connection count
 total = manager.get_total_connection_count()
 user_count = manager.get_user_connection_count(user_id)
+
+# Room subscriptions
+await manager.subscribe_to_room(connection_id, room_id)
+await manager.unsubscribe_from_room(connection_id)
+count = await manager.send_to_room(room_id, message, exclude_connection=None)
 ```
 
 ## Extending the Protocol
