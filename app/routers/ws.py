@@ -179,33 +179,62 @@ async def websocket_endpoint(
                 )
 
                 if result.success:
-                    # Subscribe connection to the room
-                    await manager.subscribe_to_room(
-                        connection.connection_id, result.room_id
-                    )
+                    # Validate required fields before constructing the OK payload
+                    if (
+                        result.room_id is None
+                        or result.code is None
+                        or result.seat_index is None
+                        or result.is_host is None
+                    ):
+                        logger.error(
+                            "CREATE_ROOM_OK result missing required fields: room_id=%s, code=%s, seat_index=%s, is_host=%s, user=%s, connection=%s",
+                            result.room_id,
+                            result.code,
+                            result.seat_index,
+                            result.is_host,
+                            user_id,
+                            connection.connection_id,
+                        )
+                        # Treat this as an internal error and notify the client
+                        await manager.send_to_connection(
+                            connection.connection_id,
+                            WSServerMessage(
+                                type=MessageType.CREATE_ROOM_ERROR,
+                                request_id=message.request_id,
+                                payload=CreateRoomErrorPayload(
+                                    error_code="INTERNAL_ERROR",
+                                    message="Room creation succeeded but response was missing required data",
+                                ).model_dump(),
+                            ),
+                        )
+                    else:
+                        # Subscribe connection to the room
+                        await manager.subscribe_to_room(
+                            connection.connection_id, result.room_id
+                        )
 
-                    # Send success response
-                    await manager.send_to_connection(
-                        connection.connection_id,
-                        WSServerMessage(
-                            type=MessageType.CREATE_ROOM_OK,
-                            request_id=message.request_id,
-                            payload=CreateRoomOkPayload(
-                                room_id=result.room_id,
-                                code=result.code,
-                                seat_index=result.seat_index,
-                                is_host=result.is_host,
-                            ).model_dump(),
-                        ),
-                    )
-                    logger.info(
-                        "CREATE_ROOM_OK: room_id=%s, code=%s, user=%s, connection=%s, cached=%s",
-                        result.room_id,
-                        result.code,
-                        user_id,
-                        connection.connection_id,
-                        result.cached,
-                    )
+                        # Send success response
+                        await manager.send_to_connection(
+                            connection.connection_id,
+                            WSServerMessage(
+                                type=MessageType.CREATE_ROOM_OK,
+                                request_id=message.request_id,
+                                payload=CreateRoomOkPayload(
+                                    room_id=result.room_id,
+                                    code=result.code,
+                                    seat_index=result.seat_index,
+                                    is_host=result.is_host,
+                                ).model_dump(),
+                            ),
+                        )
+                        logger.info(
+                            "CREATE_ROOM_OK: room_id=%s, code=%s, user=%s, connection=%s, cached=%s",
+                            result.room_id,
+                            result.code,
+                            user_id,
+                            connection.connection_id,
+                            result.cached,
+                        )
                 else:
                     # Send error response
                     await manager.send_to_connection(
