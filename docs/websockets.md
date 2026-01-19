@@ -33,6 +33,9 @@ The WebSocket system provides:
 | Connection Manager | `app/services/websocket/manager.py` | Local + Redis state management |
 | WS Authenticator | `app/services/websocket/auth.py` | JWT validation for WebSocket |
 | Message Schemas | `app/schemas/ws.py` | Pydantic models for messages |
+| Handler Registry | `app/services/websocket/handlers/__init__.py` | Handler registration and dispatch |
+| Handler Base | `app/services/websocket/handlers/base.py` | HandlerContext and HandlerResult types |
+| Ping Handler | `app/services/websocket/handlers/ping.py` | PING message handler |
 | Redis Client | `app/dependencies/redis.py` | Upstash Redis singleton |
 
 ## Connection Flow
@@ -49,7 +52,7 @@ The WebSocket system provides:
 
 ## Message Protocol
 
-**Note:** Server responses include all fields defined in the schema. Optional fields will be `null` when not applicable (e.g., `error: null`, `code: null` on success messages). Clients should handle `null` values appropriately.
+**Note:** All messages use a consistent structure with `type`, optional `request_id`, and optional `payload` fields. The `request_id` should be a UUID and is echoed back in responses for request correlation.
 
 ### Client → Server
 
@@ -57,8 +60,7 @@ The WebSocket system provides:
 ```json
 {
   "type": "ping",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "request_id": "abc123"
+  "request_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -68,7 +70,6 @@ The WebSocket system provides:
 ```json
 {
   "type": "connected",
-  "timestamp": "2024-01-15T10:30:00Z",
   "payload": {
     "connection_id": "550e8400-e29b-41d4-a716-446655440000",
     "user_id": "user-uuid",
@@ -81,8 +82,7 @@ The WebSocket system provides:
 ```json
 {
   "type": "pong",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "request_id": "abc123",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
   "payload": {
     "server_time": "2024-01-15T10:30:00Z"
   }
@@ -93,72 +93,12 @@ The WebSocket system provides:
 ```json
 {
   "type": "error",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "error": "Invalid message format",
-  "code": 1007
-}
-```
-
-## Room Operations
-
-### Create Room
-
-**Client → Server: `create_room`**
-```json
-{
-  "type": "create_room",
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
   "payload": {
-    "visibility": "private",
-    "max_players": 4,
-    "ruleset_id": "classic",
-    "ruleset_config": {}
+    "error_code": "INVALID_MESSAGE",
+    "message": "Invalid message format"
   }
 }
 ```
-
-| Field | Type | Required | Constraints |
-|-------|------|----------|-------------|
-| `request_id` | UUID | Yes | Must be valid UUID v4 (for idempotency) |
-| `visibility` | string | Yes | Must be `"private"` |
-| `max_players` | number | No | 2-4, default: 4 |
-| `ruleset_id` | string | Yes | Must be `"classic"` |
-| `ruleset_config` | object | No | Default: `{}` |
-
-**Server → Client: `create_room_ok`**
-```json
-{
-  "type": "create_room_ok",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "payload": {
-    "room_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "code": "AB12CD",
-    "seat_index": 0,
-    "is_host": true
-  }
-}
-```
-
-**Server → Client: `create_room_error`**
-```json
-{
-  "type": "create_room_error",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "payload": {
-    "error_code": "VALIDATION_ERROR",
-    "message": "request_id must be a valid UUID"
-  }
-}
-```
-
-| Error Code | Description |
-|------------|-------------|
-| `VALIDATION_ERROR` | Invalid payload or request_id |
-| `REQUEST_IN_PROGRESS` | Same request_id already being processed |
-| `CODE_GENERATION_FAILED` | Could not generate unique room code |
-| `INTERNAL_ERROR` | Unexpected server error |
 
 ## Message Types
 
@@ -168,9 +108,6 @@ The WebSocket system provides:
 | `pong` | Server → Client | Keepalive response |
 | `connected` | Server → Client | Connection acknowledgment |
 | `error` | Server → Client | Error notification |
-| `create_room` | Client → Server | Create a new game room |
-| `create_room_ok` | Server → Client | Room creation succeeded |
-| `create_room_error` | Server → Client | Room creation failed |
 
 ## Close Codes
 
@@ -282,13 +219,63 @@ await manager.unsubscribe_from_room(connection_id)
 count = await manager.send_to_room(room_id, message, exclude_connection=None)
 ```
 
+## Handler Architecture
+
+The WebSocket system uses a handler/dispatcher pattern for processing messages. This provides a clean separation of concerns and makes it easy to add new message types.
+
+### Core Components
+
+**HandlerContext** - Context passed to each handler:
+```python
+@dataclass
+class HandlerContext:
+    connection_id: str           # Unique connection identifier
+    user_id: str                 # Authenticated user ID
+    message: WSClientMessage     # The incoming message
+    manager: ConnectionManager   # For sending responses/broadcasts
+```
+
+**HandlerResult** - Result returned by handlers:
+```python
+@dataclass
+class HandlerResult:
+    success: bool                           # Whether handling succeeded
+    response: WSServerMessage | None        # Direct response to sender
+    broadcast: WSServerMessage | None       # Message to broadcast to room
+    room_id: str | None                     # Target room for broadcast
+```
+
+### Handler Registration
+
+Handlers are registered via the `@handler` decorator:
+```python
+from app.services.websocket.handlers import handler
+from app.services.websocket.handlers.base import HandlerContext, HandlerResult
+
+@handler(MessageType.PING)
+async def handle_ping(ctx: HandlerContext) -> HandlerResult:
+    return HandlerResult(
+        success=True,
+        response=WSServerMessage(type=MessageType.PONG, ...)
+    )
+```
+
+### Message Dispatch
+
+The `dispatch()` function routes incoming messages to registered handlers:
+1. Receives a `HandlerContext` with the message and connection info
+2. Looks up the handler for the message type
+3. Calls the handler and returns its `HandlerResult`
+4. Returns `None` if no handler is registered for the message type
+
 ## Extending the Protocol
 
 To add new message types:
 
 1. Add type to `MessageType` enum in `app/schemas/ws.py`
-2. Create payload schema if needed
-3. Add handler in `app/routers/ws.py` message loop
+2. Create payload schema if needed in `app/schemas/ws.py`
+3. Create a new handler file in `app/services/websocket/handlers/`
+4. Import the handler in `app/services/websocket/handlers/__init__.py`
 
 Example:
 ```python
@@ -300,8 +287,25 @@ class MessageType(str, Enum):
     ERROR = "error"
     GAME_UPDATE = "game_update"  # New type
 
-# In app/routers/ws.py
-if message.type == MessageType.GAME_UPDATE:
-    # Handle game update
-    pass
+# In app/services/websocket/handlers/game_update.py
+from app.schemas.ws import MessageType, WSServerMessage
+from app.services.websocket.handlers import handler
+from app.services.websocket.handlers.base import HandlerContext, HandlerResult
+
+@handler(MessageType.GAME_UPDATE)
+async def handle_game_update(ctx: HandlerContext) -> HandlerResult:
+    # Access context: ctx.message, ctx.user_id, ctx.connection_id, ctx.manager
+    # Process the game update...
+
+    return HandlerResult(
+        success=True,
+        response=WSServerMessage(
+            type=MessageType.GAME_UPDATE_OK,
+            request_id=ctx.message.request_id,
+            payload={"status": "updated"}
+        )
+    )
+
+# In app/services/websocket/handlers/__init__.py
+from . import ping, game_update  # Add new import
 ```
