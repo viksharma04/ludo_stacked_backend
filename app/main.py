@@ -6,7 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.dependencies.redis import close_redis_client
+from app.dependencies.supabase import close_async_supabase, init_async_supabase
 from app.routers import auth, profile, rooms, ws
+from app.services.websocket.auth import close_ws_authenticator
 from app.services.websocket.manager import get_connection_manager
 
 logger = logging.getLogger(__name__)
@@ -18,6 +20,10 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Ludo Stacked API")
     logger.debug("Debug mode: %s", settings.DEBUG)
 
+    # Initialize async Supabase client
+    await init_async_supabase()
+    logger.info("Async Supabase client initialized")
+
     # Initialize WebSocket connection manager and start cleanup task
     connection_manager = get_connection_manager()
     await connection_manager.start_cleanup_task()
@@ -25,12 +31,14 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown: stop cleanup task, close all connections, close Redis
+    # Shutdown: stop cleanup task, close all connections, close Redis, close clients
     logger.info("Shutting down Ludo Stacked API")
     await connection_manager.stop_cleanup_task()
     await connection_manager.close_all_connections()
+    await close_ws_authenticator()
+    await close_async_supabase()
     await close_redis_client()
-    logger.info("WebSocket and Redis cleanup complete")
+    logger.info("WebSocket, Supabase, and Redis cleanup complete")
 
 
 app = FastAPI(

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import os
 import uuid
@@ -19,6 +20,9 @@ from app.schemas.ws import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Send timeout in seconds
+SEND_TIMEOUT = 10.0
 
 
 @dataclass
@@ -248,17 +252,28 @@ class ConnectionManager:
                     elapsed,
                 )
 
-        for conn_id in stale_connections:
+        if not stale_connections:
+            return
+
+        # Close all stale websockets in parallel
+        async def close_websocket(conn_id: str) -> None:
             connection = self._connections.get(conn_id)
             if connection:
                 try:
-                    await connection.websocket.close(code=1001)
+                    async with asyncio.timeout(SEND_TIMEOUT):
+                        await connection.websocket.close(code=1001)
+                except TimeoutError:
+                    logger.warning("Timeout closing stale websocket %s", conn_id)
                 except Exception as e:
                     logger.debug("Error closing stale websocket %s: %s", conn_id, e)
-            await self.disconnect(conn_id)
 
-        if stale_connections:
-            logger.info("Cleaned up %d stale connections", len(stale_connections))
+        # Close websockets in parallel
+        await asyncio.gather(*[close_websocket(conn_id) for conn_id in stale_connections])
+
+        # Disconnect all stale connections in parallel
+        await asyncio.gather(*[self.disconnect(conn_id) for conn_id in stale_connections])
+
+        logger.info("Cleaned up %d stale connections", len(stale_connections))
 
     async def start_cleanup_task(self) -> None:
         """Start the periodic cleanup task for stale connections."""
@@ -285,10 +300,8 @@ class ConnectionManager:
         """Stop the periodic cleanup task."""
         if self._cleanup_task is not None:
             self._cleanup_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
             self._cleanup_task = None
             logger.info("Cleanup task stopped")
 
@@ -296,17 +309,26 @@ class ConnectionManager:
         """Close all active WebSocket connections gracefully."""
         logger.info("Closing all %d connections", len(self._connections))
         conn_ids = list(self._connections.keys())
-        for conn_id in conn_ids:
+
+        # Close all websockets in parallel
+        async def close_websocket(conn_id: str) -> None:
             connection = self._connections.get(conn_id)
             if connection:
                 try:
-                    await connection.websocket.close(code=1001)
+                    async with asyncio.timeout(SEND_TIMEOUT):
+                        await connection.websocket.close(code=1001)
+                except TimeoutError:
+                    logger.warning("Timeout closing websocket %s", conn_id)
                 except Exception as e:
                     logger.debug("Error closing websocket %s: %s", conn_id, e)
-            await self.disconnect(conn_id)
+
+        await asyncio.gather(*[close_websocket(conn_id) for conn_id in conn_ids])
+
+        # Disconnect all in parallel
+        await asyncio.gather(*[self.disconnect(conn_id) for conn_id in conn_ids])
 
     async def send_to_connection(self, connection_id: str, message: WSServerMessage) -> bool:
-        """Send a message to a specific connection.
+        """Send a message to a specific connection with timeout.
 
         Args:
             connection_id: The target connection.
@@ -321,8 +343,13 @@ class ConnectionManager:
             return False
 
         try:
-            await connection.websocket.send_json(message.model_dump(mode="json"))
+            async with asyncio.timeout(SEND_TIMEOUT):
+                await connection.websocket.send_json(message.model_dump(mode="json"))
             return True
+        except TimeoutError:
+            logger.warning("Timeout sending to connection %s", connection_id)
+            await self.disconnect(connection_id)
+            return False
         except Exception as e:
             logger.warning("Failed to send to connection %s: %s", connection_id, e)
             await self.disconnect(connection_id)

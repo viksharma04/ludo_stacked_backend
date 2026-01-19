@@ -122,9 +122,7 @@ async def join_room(
             "ROOM_FULL": status.HTTP_400_BAD_REQUEST,
             "INTERNAL_ERROR": status.HTTP_500_INTERNAL_SERVER_ERROR,
         }
-        http_status = error_status_map.get(
-            result.error_code, status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        http_status = error_status_map.get(result.error_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
         logger.warning(
             "Join room failed for user %s, code %s: %s - %s",
             user_id,

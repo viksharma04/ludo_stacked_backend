@@ -6,10 +6,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from supabase import AsyncClient
 from upstash_redis.asyncio import Redis
 
 from app.dependencies.redis import get_redis_client
-from app.dependencies.supabase import get_supabase_client
+from app.dependencies.supabase import get_async_supabase
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +92,14 @@ class RoomService:
     """Service for managing game rooms.
 
     Handles room creation via Supabase RPC and Redis state initialization.
+    Uses async Supabase client to avoid blocking the event loop.
     """
 
-    def __init__(self, redis_client: Redis | None = None):
+    def __init__(
+        self, redis_client: Redis | None = None, supabase_client: AsyncClient | None = None
+    ):
         self._redis = redis_client or get_redis_client()
-        self._supabase = get_supabase_client()
+        self._supabase = supabase_client or get_async_supabase()
 
     def _redis_room_meta_key(self, room_id: str) -> str:
         return f"room:{room_id}:meta"
@@ -103,13 +107,13 @@ class RoomService:
     def _redis_room_seats_key(self, room_id: str) -> str:
         return f"room:{room_id}:seats"
 
-    def _get_user_display_name(self, user_id: str) -> str:
+    async def _get_user_display_name(self, user_id: str) -> str:
         """Fetch user's display_name from the profiles table.
 
         Returns empty string if profile not found or on error.
         """
         try:
-            response = (
+            response = await (
                 self._supabase.table("profiles")
                 .select("display_name")
                 .eq("id", user_id)
@@ -153,7 +157,7 @@ class RoomService:
         """
         try:
             # Call Supabase RPC
-            response = self._supabase.rpc(
+            response = await self._supabase.rpc(
                 "create_room",
                 {
                     "p_user_id": user_id,
@@ -210,7 +214,7 @@ class RoomService:
             # Initialize Redis state only for non-cached (new) rooms
             if not cached:
                 # Fetch owner's display_name for the seat data
-                display_name = self._get_user_display_name(user_id)
+                display_name = await self._get_user_display_name(user_id)
 
                 await self._initialize_redis_state(
                     room_id=room_id,
@@ -268,7 +272,7 @@ class RoomService:
 
         try:
             # Call Supabase RPC
-            response = self._supabase.rpc(
+            response = await self._supabase.rpc(
                 "find_or_create_room",
                 {
                     "p_user_id": user_id,
@@ -323,7 +327,7 @@ class RoomService:
 
             # Initialize Redis state only for newly created rooms
             if not cached:
-                display_name = self._get_user_display_name(user_id)
+                display_name = await self._get_user_display_name(user_id)
 
                 await self._initialize_redis_state(
                     room_id=room_id,
@@ -481,7 +485,7 @@ class RoomService:
             logger.exception("Error getting room snapshot for %s: %s", room_id, e)
             return None
 
-    def _resolve_room_code(self, code: str, user_id: str) -> tuple[str | None, str | None]:
+    async def _resolve_room_code(self, code: str, user_id: str) -> tuple[str | None, str | None]:
         """Resolve a room code to room_id with authorization.
 
         Returns: (room_id, error_code) - one will be None.
@@ -492,7 +496,7 @@ class RoomService:
         - ROOM_IN_GAME: Room in game and user is not a member
         """
         try:
-            response = (
+            response = await (
                 self._supabase.table("rooms")
                 .select("room_id, status")
                 .eq("code", code.upper())
@@ -509,10 +513,9 @@ class RoomService:
             if status == "closed":
                 return None, "ROOM_CLOSED"
 
-            if status == "in_game":
-                # Check if user is already a member (has a seat)
-                if not self._is_user_room_member(room_id, user_id):
-                    return None, "ROOM_IN_GAME"
+            # Check if room is in game and user is not a member
+            if status == "in_game" and not await self._is_user_room_member(room_id, user_id):
+                return None, "ROOM_IN_GAME"
 
             return room_id, None
 
@@ -520,10 +523,10 @@ class RoomService:
             logger.warning("Error resolving room code %s: %s", code, e)
             return None, "ROOM_NOT_FOUND"
 
-    def _is_user_room_member(self, room_id: str, user_id: str) -> bool:
+    async def _is_user_room_member(self, room_id: str, user_id: str) -> bool:
         """Check if a user is a member (seated) in a room."""
         try:
-            response = (
+            response = await (
                 self._supabase.table("room_seats")
                 .select("room_id")
                 .eq("room_id", room_id)
@@ -536,7 +539,9 @@ class RoomService:
             logger.warning("Error checking room membership for user %s: %s", user_id, e)
             return False
 
-    def validate_room_access(self, user_id: str, room_code: str) -> tuple[str | None, str | None]:
+    async def validate_room_access(
+        self, user_id: str, room_code: str
+    ) -> tuple[str | None, str | None]:
         """Validate user can access room via WebSocket.
 
         Checks that:
@@ -558,7 +563,7 @@ class RoomService:
         """
         try:
             # 1. Find room by code (must be open or in_game)
-            response = (
+            response = await (
                 self._supabase.table("rooms")
                 .select("room_id, status")
                 .eq("code", room_code.upper())
@@ -573,7 +578,7 @@ class RoomService:
             room_id = str(response.data["room_id"])
 
             # 2. Check user has a seat in the room
-            if not self._is_user_room_member(room_id, user_id):
+            if not await self._is_user_room_member(room_id, user_id):
                 return None, "ROOM_ACCESS_DENIED"
 
             return room_id, None
@@ -598,7 +603,7 @@ class RoomService:
         """
         try:
             # Resolve room code to room_id with authorization
-            room_id, error_code = self._resolve_room_code(room_code, user_id)
+            room_id, error_code = await self._resolve_room_code(room_code, user_id)
             if error_code:
                 error_messages = {
                     "ROOM_NOT_FOUND": "Room not found",
@@ -658,10 +663,10 @@ class RoomService:
                 )
 
             # Get user's display name
-            display_name = self._get_user_display_name(user_id)
+            display_name = await self._get_user_display_name(user_id)
 
             # Update DB first
-            db_updated = self._update_seat_in_db(room_id, empty_seat_index, user_id)
+            db_updated = await self._update_seat_in_db(room_id, empty_seat_index, user_id)
             if not db_updated:
                 return JoinRoomResult(
                     success=False,
@@ -704,10 +709,10 @@ class RoomService:
                 error_message="Failed to join room",
             )
 
-    def _update_seat_in_db(self, room_id: str, seat_index: int, user_id: str) -> bool:
+    async def _update_seat_in_db(self, room_id: str, seat_index: int, user_id: str) -> bool:
         """Update a seat in the database."""
         try:
-            response = (
+            response = await (
                 self._supabase.table("room_seats")
                 .update({"user_id": user_id})
                 .eq("room_id", room_id)
@@ -751,28 +756,72 @@ class RoomService:
         await self._redis.hset(seats_key, f"seat:{seat_index}", seat_data)
 
     async def _update_seat_connected(self, room_id: str, seat_index: int, connected: bool) -> None:
-        """Update the connected status of a seat in Redis."""
+        """Update the connected status of a seat in Redis using atomic Lua script."""
         seats_key = self._redis_room_seats_key(room_id)
-        seat_json = await self._redis.hget(seats_key, f"seat:{seat_index}")
-        if seat_json:
-            try:
-                seat_data = json.loads(seat_json)
-                seat_data["connected"] = connected
-                await self._redis.hset(seats_key, f"seat:{seat_index}", json.dumps(seat_data))
-            except json.JSONDecodeError:
-                pass
+
+        # Lua script for atomic read-modify-write
+        lua_script = """
+        local seat_json = redis.call('HGET', KEYS[1], ARGV[1])
+        if not seat_json or seat_json == '' then
+            return 0
+        end
+        local seat = cjson.decode(seat_json)
+        seat['connected'] = ARGV[2] == 'true'
+        redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(seat))
+        return 1
+        """
+
+        try:
+            await self._redis.eval(
+                lua_script,
+                keys=[seats_key],
+                args=[f"seat:{seat_index}", "true" if connected else "false"],
+            )
+        except Exception as e:
+            logger.warning("Failed to update seat connected atomically: %s", e)
+            # Fallback to non-atomic update
+            seat_json = await self._redis.hget(seats_key, f"seat:{seat_index}")
+            if seat_json:
+                try:
+                    seat_data = json.loads(seat_json)
+                    seat_data["connected"] = connected
+                    await self._redis.hset(seats_key, f"seat:{seat_index}", json.dumps(seat_data))
+                except json.JSONDecodeError:
+                    pass
 
     async def _update_seat_ready(self, room_id: str, seat_index: int, ready_state: str) -> None:
-        """Update the ready status of a seat in Redis."""
+        """Update the ready status of a seat in Redis using atomic Lua script."""
         seats_key = self._redis_room_seats_key(room_id)
-        seat_json = await self._redis.hget(seats_key, f"seat:{seat_index}")
-        if seat_json:
-            try:
-                seat_data = json.loads(seat_json)
-                seat_data["ready"] = ready_state
-                await self._redis.hset(seats_key, f"seat:{seat_index}", json.dumps(seat_data))
-            except json.JSONDecodeError:
-                pass
+
+        # Lua script for atomic read-modify-write
+        lua_script = """
+        local seat_json = redis.call('HGET', KEYS[1], ARGV[1])
+        if not seat_json or seat_json == '' then
+            return 0
+        end
+        local seat = cjson.decode(seat_json)
+        seat['ready'] = ARGV[2]
+        redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(seat))
+        return 1
+        """
+
+        try:
+            await self._redis.eval(
+                lua_script,
+                keys=[seats_key],
+                args=[f"seat:{seat_index}", ready_state],
+            )
+        except Exception as e:
+            logger.warning("Failed to update seat ready atomically: %s", e)
+            # Fallback to non-atomic update
+            seat_json = await self._redis.hget(seats_key, f"seat:{seat_index}")
+            if seat_json:
+                try:
+                    seat_data = json.loads(seat_json)
+                    seat_data["ready"] = ready_state
+                    await self._redis.hset(seats_key, f"seat:{seat_index}", json.dumps(seat_data))
+                except json.JSONDecodeError:
+                    pass
 
     async def _check_all_ready(self, room_id: str) -> bool:
         """Check if all occupied seats are ready with minimum 2 players.
@@ -1024,13 +1073,13 @@ class RoomService:
                 e,
             )
 
-    def _close_room_in_db(self, room_id: str) -> bool:
+    async def _close_room_in_db(self, room_id: str) -> bool:
         """Set room status to 'closed' in the database.
 
         Returns True if successful, False otherwise.
         """
         try:
-            response = (
+            response = await (
                 self._supabase.table("rooms")
                 .update({"status": "closed"})
                 .eq("room_id", room_id)
@@ -1045,13 +1094,13 @@ class RoomService:
             logger.exception("Error closing room %s in DB: %s", room_id, e)
             return False
 
-    def _clear_seat_in_db(self, room_id: str, seat_index: int) -> bool:
+    async def _clear_seat_in_db(self, room_id: str, seat_index: int) -> bool:
         """Clear a seat in the database (set user_id to null).
 
         Returns True if successful, False otherwise.
         """
         try:
-            response = (
+            response = await (
                 self._supabase.table("room_seats")
                 .update({"user_id": None})
                 .eq("room_id", room_id)
@@ -1149,7 +1198,7 @@ class RoomService:
             # Check if user is host
             if user_seat.is_host:
                 # Host is leaving - close the room
-                self._close_room_in_db(room_id)
+                await self._close_room_in_db(room_id)
                 await self._delete_room_redis(room_id)
 
                 logger.info("Host %s left room %s, room closed", user_id, room_id)
@@ -1162,7 +1211,7 @@ class RoomService:
                 )
 
             # Player is leaving - clear their seat
-            self._clear_seat_in_db(room_id, user_seat.seat_index)
+            await self._clear_seat_in_db(room_id, user_seat.seat_index)
             await self._clear_seat_in_redis(room_id, user_seat.seat_index)
 
             # Reset all ready states

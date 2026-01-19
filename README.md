@@ -63,17 +63,20 @@ app/
 ├── routers/
 │   ├── auth.py          # Authentication endpoints
 │   ├── profile.py       # User profile endpoints
+│   ├── rooms.py         # Room management endpoints
 │   └── ws.py            # WebSocket endpoint
 ├── schemas/
 │   ├── auth.py          # Auth request/response models
 │   ├── profile.py       # Profile request/response models
+│   ├── room.py          # Room request/response models
 │   └── ws.py            # WebSocket message models
 └── services/
     ├── room/
-    │   └── service.py   # Room creation via Supabase RPC
+    │   └── service.py   # Room management service
     └── websocket/
         ├── auth.py      # WebSocket JWT validation
-        └── manager.py   # Connection state manager
+        ├── manager.py   # Connection state manager
+        └── handlers/    # Message handlers (ping, ready, leave)
 docs/
 ├── redis.md             # Redis integration guide
 └── websockets.md        # WebSocket implementation guide
@@ -97,20 +100,66 @@ specs/
 | GET | `/api/v1/profile` | Get current user's profile | Yes |
 | PATCH | `/api/v1/profile` | Update display name (1-50 chars) | Yes |
 
+### Rooms (`/api/v1/rooms`)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/api/v1/rooms` | Create a new room (or return existing) | Yes |
+| POST | `/api/v1/rooms/join` | Join an existing room by code | Yes |
+
+**Create Room Request:**
+```json
+{ "n_players": 4 }
+```
+
+**Create Room Response:**
+```json
+{
+  "room_id": "uuid",
+  "code": "ABC123",
+  "seat": { "seat_index": 0, "is_host": true },
+  "cached": false
+}
+```
+
+**Join Room Request:**
+```json
+{ "code": "ABC123" }
+```
+
+**Join Room Response:**
+```json
+{
+  "room_id": "uuid",
+  "code": "ABC123",
+  "seat": { "seat_index": 1, "is_host": false }
+}
+```
+
 ### WebSocket (`/api/v1/ws`)
 
 | Endpoint | Description | Auth |
 |----------|-------------|------|
-| `ws://host/api/v1/ws?token=<jwt>` | Real-time connection | JWT in query param |
+| `ws://host/api/v1/ws?token=<jwt>&room_code=<code>` | Real-time room connection | JWT + room code |
+
+**Connection Requirements:**
+- Valid JWT token
+- Valid room code (6 characters)
+- User must have a seat in the room (via `/rooms` or `/rooms/join`)
 
 **Supported Message Types:**
 
 | Type | Direction | Description |
 |------|-----------|-------------|
 | `ping` / `pong` | Client ↔ Server | Keepalive heartbeat |
-| `connected` | Server → Client | Connection acknowledgment |
+| `connected` | Server → Client | Connection acknowledgment with room snapshot |
+| `toggle_ready` | Client → Server | Toggle ready state |
+| `leave_room` | Client → Server | Leave the current room |
+| `room_updated` | Server → Client | Room state changed |
+| `room_closed` | Server → Client | Room closed (host left) |
+| `error` | Server → Client | Error notification |
 
-See [docs/websockets.md](docs/websockets.md) for protocol details.
+See [docs/websockets.md](docs/websockets.md) for full protocol details.
 
 ### Other
 

@@ -1,4 +1,7 @@
+import json
 import logging
+import time
+from collections import defaultdict
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
@@ -14,13 +17,18 @@ from app.schemas.ws import (
     WSServerMessage,
 )
 from app.services.room.service import RoomSnapshotData, get_room_service
-from app.services.websocket.auth import WSAuthenticator
+from app.services.websocket.auth import get_ws_authenticator
 from app.services.websocket.handlers import HandlerContext, dispatch
 from app.services.websocket.manager import get_connection_manager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["websocket"])
+
+# Rate limiting configuration
+MAX_MESSAGE_SIZE = 64 * 1024  # 64 KB
+MAX_MESSAGES_PER_SECOND = 10
+RATE_LIMIT_WINDOW = 1.0  # seconds
 
 
 def _to_room_snapshot(data: RoomSnapshotData) -> RoomSnapshot:
@@ -47,6 +55,41 @@ def _to_room_snapshot(data: RoomSnapshotData) -> RoomSnapshot:
     )
 
 
+class RateLimiter:
+    """Simple token bucket rate limiter per connection."""
+
+    def __init__(
+        self, max_tokens: int = MAX_MESSAGES_PER_SECOND, window: float = RATE_LIMIT_WINDOW
+    ):
+        self.max_tokens = max_tokens
+        self.window = window
+        self._tokens: dict[str, list[float]] = defaultdict(list)
+
+    def is_allowed(self, connection_id: str) -> bool:
+        """Check if a message is allowed under rate limiting."""
+        now = time.time()
+        cutoff = now - self.window
+
+        # Remove expired timestamps
+        self._tokens[connection_id] = [t for t in self._tokens[connection_id] if t > cutoff]
+
+        # Check if under limit
+        if len(self._tokens[connection_id]) >= self.max_tokens:
+            return False
+
+        # Record this message
+        self._tokens[connection_id].append(now)
+        return True
+
+    def remove(self, connection_id: str) -> None:
+        """Remove rate limit tracking for a connection."""
+        self._tokens.pop(connection_id, None)
+
+
+# Global rate limiter instance
+_rate_limiter = RateLimiter()
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -61,9 +104,9 @@ async def websocket_endpoint(
     User must have a seat in the room to connect.
     On successful connection, server sends a 'connected' message with room snapshot.
     """
-    # Validate token BEFORE accepting connection
-    authenticator = WSAuthenticator()
-    auth_result = authenticator.validate_token(token)
+    # Validate token BEFORE accepting connection (async to avoid blocking)
+    authenticator = get_ws_authenticator()
+    auth_result = await authenticator.validate_token(token)
 
     if not auth_result.success:
         logger.warning("WS connection rejected: %s", auth_result.error)
@@ -77,9 +120,9 @@ async def websocket_endpoint(
         await websocket.close(code=WSCloseCode.AUTH_FAILED)
         return
 
-    # Validate room access
+    # Validate room access (async to avoid blocking)
     room_service = get_room_service()
-    room_id, error = room_service.validate_room_access(user_id, room_code)
+    room_id, error = await room_service.validate_room_access(user_id, room_code)
     if error:
         logger.warning(
             "WS connection rejected for user %s: %s (room_code=%s)",
@@ -88,7 +131,9 @@ async def websocket_endpoint(
             room_code,
         )
         close_code = (
-            WSCloseCode.ROOM_NOT_FOUND if error == "ROOM_NOT_FOUND" else WSCloseCode.ROOM_ACCESS_DENIED
+            WSCloseCode.ROOM_NOT_FOUND
+            if error == "ROOM_NOT_FOUND"
+            else WSCloseCode.ROOM_ACCESS_DENIED
         )
         await websocket.close(code=close_code)
         return
@@ -128,8 +173,88 @@ async def websocket_endpoint(
                 logger.debug("WebSocket no longer connected, exiting loop")
                 break
 
-            # Receive message
-            data = await websocket.receive_json()
+            # Receive raw message with size limit check
+            try:
+                message_data = await websocket.receive()
+            except Exception as e:
+                logger.debug("Error receiving message: %s", e)
+                break
+
+            # Handle disconnect message
+            if message_data.get("type") == "websocket.disconnect":
+                break
+
+            # Get raw bytes/text for size check
+            raw_text = message_data.get("text")
+            raw_bytes = message_data.get("bytes")
+
+            if raw_text:
+                message_size = len(raw_text.encode("utf-8"))
+            elif raw_bytes:
+                message_size = len(raw_bytes)
+            else:
+                continue
+
+            # Check message size limit
+            if message_size > MAX_MESSAGE_SIZE:
+                logger.warning(
+                    "Message too large from connection %s: %d bytes (max %d)",
+                    connection.connection_id,
+                    message_size,
+                    MAX_MESSAGE_SIZE,
+                )
+                await manager.send_to_connection(
+                    connection.connection_id,
+                    WSServerMessage(
+                        type=MessageType.ERROR,
+                        payload=ErrorPayload(
+                            error_code="MESSAGE_TOO_LARGE",
+                            message=f"Message exceeds maximum size of {MAX_MESSAGE_SIZE} bytes",
+                        ).model_dump(),
+                    ),
+                )
+                continue
+
+            # Check rate limit
+            if not _rate_limiter.is_allowed(connection.connection_id):
+                logger.warning(
+                    "Rate limit exceeded for connection %s",
+                    connection.connection_id,
+                )
+                await manager.send_to_connection(
+                    connection.connection_id,
+                    WSServerMessage(
+                        type=MessageType.ERROR,
+                        payload=ErrorPayload(
+                            error_code="RATE_LIMITED",
+                            message="Too many messages, please slow down",
+                        ).model_dump(),
+                    ),
+                )
+                continue
+
+            # Parse JSON from raw text
+            if not raw_text:
+                continue
+
+            try:
+                data = json.loads(raw_text)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Invalid JSON from connection %s",
+                    connection.connection_id,
+                )
+                await manager.send_to_connection(
+                    connection.connection_id,
+                    WSServerMessage(
+                        type=MessageType.ERROR,
+                        payload=ErrorPayload(
+                            error_code="INVALID_JSON",
+                            message="Invalid JSON format",
+                        ).model_dump(),
+                    ),
+                )
+                continue
 
             # Parse and validate message
             try:
@@ -198,11 +323,13 @@ async def websocket_endpoint(
             e,
         )
     finally:
-        # Disconnect and update seat connected status
+        # Clean up rate limiter for this connection
+        _rate_limiter.remove(connection.connection_id)
+
+        # Disconnect from manager (handles seat connected update and ready reset)
         await manager.disconnect(connection.connection_id)
 
-        # Update seat connected=false and broadcast to remaining room members
-        await room_service.update_seat_connected_by_user(room_id, user_id, connected=False)
+        # Broadcast updated room state to remaining members
         updated_snapshot_data = await room_service.get_room_snapshot(room_id)
         if updated_snapshot_data:
             await manager.send_to_room(
