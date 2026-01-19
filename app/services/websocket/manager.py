@@ -3,7 +3,7 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import WebSocket
 from upstash_redis.asyncio import Redis
@@ -26,8 +26,8 @@ class Connection:
     connection_id: str
     websocket: WebSocket
     user_id: str
-    connected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    last_heartbeat: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    connected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_heartbeat: datetime = field(default_factory=lambda: datetime.now(UTC))
     room_id: str | None = None
 
 
@@ -75,7 +75,7 @@ class ConnectionManager:
             The created Connection object.
         """
         connection_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         connection = Connection(
             connection_id=connection_id,
@@ -95,7 +95,9 @@ class ConnectionManager:
         try:
             await self._redis.incr(self._redis_user_conn_count_key(user_id))
         except Exception as e:
-            logger.error("Failed to increment connection count for user %s in Redis: %s", user_id, e)
+            logger.error(
+                "Failed to increment connection count for user %s in Redis: %s", user_id, e
+            )
 
         logger.info(
             "Connection %s established for user %s on server %s",
@@ -149,7 +151,9 @@ class ConnectionManager:
             if count is not None and int(count) <= 0:
                 await self._redis.delete(self._redis_user_conn_count_key(user_id))
         except Exception as e:
-            logger.error("Failed to decrement connection count for user %s in Redis: %s", user_id, e)
+            logger.error(
+                "Failed to decrement connection count for user %s in Redis: %s", user_id, e
+            )
 
         logger.info("Connection %s disconnected for user %s", connection_id, user_id)
 
@@ -161,12 +165,12 @@ class ConnectionManager:
         """
         connection = self._connections.get(connection_id)
         if connection:
-            connection.last_heartbeat = datetime.now(timezone.utc)
+            connection.last_heartbeat = datetime.now(UTC)
             logger.debug("Heartbeat updated for connection %s", connection_id)
 
     async def cleanup_stale_connections(self) -> None:
         """Remove connections that have exceeded the timeout period."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timeout = self._settings.WS_CONNECTION_TIMEOUT
         stale_connections = []
 
@@ -239,9 +243,7 @@ class ConnectionManager:
                     logger.debug("Error closing websocket %s: %s", conn_id, e)
             await self.disconnect(conn_id)
 
-    async def send_to_connection(
-        self, connection_id: str, message: WSServerMessage
-    ) -> bool:
+    async def send_to_connection(self, connection_id: str, message: WSServerMessage) -> bool:
         """Send a message to a specific connection.
 
         Args:
