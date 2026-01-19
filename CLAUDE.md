@@ -60,7 +60,7 @@ FastAPI backend using Supabase for authentication and database. Python 3.12+, ma
 - **Connection Manager** (`app/services/websocket/manager.py`): Tracks connections locally and in Redis for distributed state, manages room subscriptions
 - **Message Protocol**: JSON messages with `type` field:
   - Core: `ping`, `pong`, `connected`, `error`
-  - Room: `create_room`, `create_room_ok`, `create_room_error`
+  - Room: `create_room`, `create_room_ok`, `create_room_error`, `join_room`, `join_room_ok`, `join_room_error`, `room_updated`
 - **Redis Keys**:
   - `ws:user:{user_id}:conn_count` - atomic counter for presence tracking
   - `room:{room_id}:meta` - room metadata hash
@@ -70,11 +70,17 @@ See `docs/websockets.md` and `docs/redis.md` for detailed documentation.
 
 ### Room Operations
 
-Room creation uses a Supabase RPC stored procedure (`create_room`) for atomic operations:
+**Room Creation** uses a Supabase RPC stored procedure (`create_room`) for atomic operations:
 - Idempotency via `ws_idempotency` table (request_id must be UUID)
 - Unique 6-character room code generation with collision retry
 - Creates room record and 4 seat records in single transaction
 - Redis state initialized after successful DB commit (best-effort)
+
+**Room Joining** via WebSocket `join_room` message:
+- Accepts `room_code` (not `room_id`) to enforce access control through code knowledge
+- Resolves code to room with authorization checks (status, membership)
+- Allocates first available seat for new joiners
+- Broadcasts `room_updated` to existing room members
 
 ### Adding New Features
 

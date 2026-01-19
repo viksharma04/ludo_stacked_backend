@@ -82,7 +82,29 @@ class JWTBearer(HTTPBearer):
 
 jwt_bearer = JWTBearer()
 
+
+class OptionalJWTBearer(JWTBearer):
+    """JWT bearer that returns None instead of raising an error when no token is provided."""
+
+    async def __call__(
+        self,
+        credentials: Annotated[
+            HTTPAuthorizationCredentials | None,
+            Depends(HTTPBearer(auto_error=False)),
+        ],
+        settings: Annotated[Settings, Depends(get_settings)],
+    ) -> dict | None:
+        if credentials is None:
+            return None
+
+        # Delegate to parent for actual validation
+        return await super().__call__(credentials, settings)
+
+
+optional_jwt_bearer = OptionalJWTBearer()
+
 CurrentUser = Annotated[dict, Depends(jwt_bearer)]
+OptionalCurrentUser = Annotated[dict | None, Depends(optional_jwt_bearer)]
 
 
 async def get_current_user(token_payload: CurrentUser) -> dict:

@@ -6,11 +6,13 @@ from pydantic import ValidationError
 from starlette.websockets import WebSocketState
 
 from app.schemas.ws import (
-    CreateRoomErrorPayload,
-    CreateRoomOkPayload,
     CreateRoomPayload,
+    ErrorPayload,
+    JoinRoomPayload,
     MessageType,
     PongPayload,
+    RoomSnapshot,
+    SeatSnapshot,
     WSClientMessage,
     WSCloseCode,
     WSServerMessage,
@@ -83,8 +85,10 @@ async def websocket_endpoint(
                     connection.connection_id,
                     WSServerMessage(
                         type=MessageType.ERROR,
-                        error="Invalid message format",
-                        code=WSCloseCode.INVALID_DATA,
+                        payload=ErrorPayload(
+                            error_code="INVALID_MESSAGE",
+                            message="Invalid message format",
+                        ).model_dump(),
                     ),
                 )
                 continue
@@ -121,7 +125,7 @@ async def websocket_endpoint(
                         connection.connection_id,
                         WSServerMessage(
                             type=MessageType.CREATE_ROOM_ERROR,
-                            payload=CreateRoomErrorPayload(
+                            payload=ErrorPayload(
                                 error_code="VALIDATION_ERROR",
                                 message="request_id is required",
                             ).model_dump(),
@@ -137,7 +141,7 @@ async def websocket_endpoint(
                         WSServerMessage(
                             type=MessageType.CREATE_ROOM_ERROR,
                             request_id=message.request_id,
-                            payload=CreateRoomErrorPayload(
+                            payload=ErrorPayload(
                                 error_code="VALIDATION_ERROR",
                                 message="request_id must be a valid UUID",
                             ).model_dump(),
@@ -159,7 +163,7 @@ async def websocket_endpoint(
                         WSServerMessage(
                             type=MessageType.CREATE_ROOM_ERROR,
                             request_id=message.request_id,
-                            payload=CreateRoomErrorPayload(
+                            payload=ErrorPayload(
                                 error_code="VALIDATION_ERROR",
                                 message=str(e),
                             ).model_dump(),
@@ -201,7 +205,7 @@ async def websocket_endpoint(
                             WSServerMessage(
                                 type=MessageType.CREATE_ROOM_ERROR,
                                 request_id=message.request_id,
-                                payload=CreateRoomErrorPayload(
+                                payload=ErrorPayload(
                                     error_code="INTERNAL_ERROR",
                                     message="Room creation succeeded but response was missing required data",
                                 ).model_dump(),
@@ -213,18 +217,55 @@ async def websocket_endpoint(
                             connection.connection_id, result.room_id
                         )
 
-                        # Send success response
+                        # Fetch room snapshot for response
+                        snapshot_data = await room_service.get_room_snapshot(result.room_id)
+                        if not snapshot_data:
+                            logger.error(
+                                "Failed to get room snapshot after creation: room_id=%s",
+                                result.room_id,
+                            )
+                            await manager.send_to_connection(
+                                connection.connection_id,
+                                WSServerMessage(
+                                    type=MessageType.CREATE_ROOM_ERROR,
+                                    request_id=message.request_id,
+                                    payload=ErrorPayload(
+                                        error_code="INTERNAL_ERROR",
+                                        message="Room created but failed to retrieve snapshot",
+                                    ).model_dump(),
+                                ),
+                            )
+                            continue
+
+                        # Convert dataclass snapshot to Pydantic model
+                        room_snapshot = RoomSnapshot(
+                            room_id=snapshot_data.room_id,
+                            code=snapshot_data.code,
+                            status=snapshot_data.status,
+                            visibility=snapshot_data.visibility,
+                            ruleset_id=snapshot_data.ruleset_id,
+                            max_players=snapshot_data.max_players,
+                            seats=[
+                                SeatSnapshot(
+                                    seat_index=seat.seat_index,
+                                    user_id=seat.user_id,
+                                    display_name=seat.display_name,
+                                    ready=seat.ready,
+                                    connected=seat.connected,
+                                    is_host=seat.is_host,
+                                )
+                                for seat in snapshot_data.seats
+                            ],
+                            version=snapshot_data.version,
+                        )
+
+                        # Send success response with room snapshot
                         await manager.send_to_connection(
                             connection.connection_id,
                             WSServerMessage(
                                 type=MessageType.CREATE_ROOM_OK,
                                 request_id=message.request_id,
-                                payload=CreateRoomOkPayload(
-                                    room_id=result.room_id,
-                                    code=result.code,
-                                    seat_index=result.seat_index,
-                                    is_host=result.is_host,
-                                ).model_dump(),
+                                payload=room_snapshot.model_dump(),
                             ),
                         )
                         logger.info(
@@ -242,7 +283,7 @@ async def websocket_endpoint(
                         WSServerMessage(
                             type=MessageType.CREATE_ROOM_ERROR,
                             request_id=message.request_id,
-                            payload=CreateRoomErrorPayload(
+                            payload=ErrorPayload(
                                 error_code=result.error_code or "INTERNAL_ERROR",
                                 message=result.error_message or "Unknown error",
                             ).model_dump(),
@@ -250,6 +291,151 @@ async def websocket_endpoint(
                     )
                     logger.warning(
                         "CREATE_ROOM_ERROR: error_code=%s, message=%s, user=%s, connection=%s",
+                        result.error_code,
+                        result.error_message,
+                        user_id,
+                        connection.connection_id,
+                    )
+
+            elif message.type == MessageType.JOIN_ROOM:
+                logger.info(
+                    "JOIN_ROOM request: connection=%s, user=%s, request_id=%s, payload=%s",
+                    connection.connection_id,
+                    user_id,
+                    message.request_id,
+                    message.payload,
+                )
+
+                # Validate request_id is required and is a valid UUID
+                if not message.request_id:
+                    await manager.send_to_connection(
+                        connection.connection_id,
+                        WSServerMessage(
+                            type=MessageType.JOIN_ROOM_ERROR,
+                            payload=ErrorPayload(
+                                error_code="VALIDATION_ERROR",
+                                message="request_id is required",
+                            ).model_dump(),
+                        ),
+                    )
+                    continue
+
+                try:
+                    uuid.UUID(message.request_id)
+                except ValueError:
+                    await manager.send_to_connection(
+                        connection.connection_id,
+                        WSServerMessage(
+                            type=MessageType.JOIN_ROOM_ERROR,
+                            request_id=message.request_id,
+                            payload=ErrorPayload(
+                                error_code="VALIDATION_ERROR",
+                                message="request_id must be a valid UUID",
+                            ).model_dump(),
+                        ),
+                    )
+                    continue
+
+                # Validate payload
+                try:
+                    payload = JoinRoomPayload.model_validate(message.payload or {})
+                except ValidationError as e:
+                    logger.warning(
+                        "Invalid join_room payload from connection %s: %s",
+                        connection.connection_id,
+                        e,
+                    )
+                    await manager.send_to_connection(
+                        connection.connection_id,
+                        WSServerMessage(
+                            type=MessageType.JOIN_ROOM_ERROR,
+                            request_id=message.request_id,
+                            payload=ErrorPayload(
+                                error_code="VALIDATION_ERROR",
+                                message=str(e),
+                            ).model_dump(),
+                        ),
+                    )
+                    continue
+
+                # Call room service to join
+                room_service = get_room_service()
+                result = await room_service.join_room(
+                    user_id=user_id,
+                    room_code=payload.room_code,
+                )
+
+                if result.success and result.room_snapshot:
+                    # Subscribe connection to the room
+                    await manager.subscribe_to_room(
+                        connection.connection_id, result.room_snapshot.room_id
+                    )
+
+                    # Convert dataclass snapshot to Pydantic model
+                    snapshot = result.room_snapshot
+                    room_snapshot = RoomSnapshot(
+                        room_id=snapshot.room_id,
+                        code=snapshot.code,
+                        status=snapshot.status,
+                        visibility=snapshot.visibility,
+                        ruleset_id=snapshot.ruleset_id,
+                        max_players=snapshot.max_players,
+                        seats=[
+                            SeatSnapshot(
+                                seat_index=seat.seat_index,
+                                user_id=seat.user_id,
+                                display_name=seat.display_name,
+                                ready=seat.ready,
+                                connected=seat.connected,
+                                is_host=seat.is_host,
+                            )
+                            for seat in snapshot.seats
+                        ],
+                        version=snapshot.version,
+                    )
+
+                    # Send success response with room snapshot
+                    await manager.send_to_connection(
+                        connection.connection_id,
+                        WSServerMessage(
+                            type=MessageType.JOIN_ROOM_OK,
+                            request_id=message.request_id,
+                            payload=room_snapshot.model_dump(),
+                        ),
+                    )
+
+                    # Broadcast room update to all other members
+                    await manager.send_to_room(
+                        result.room_snapshot.room_id,
+                        WSServerMessage(
+                            type=MessageType.ROOM_UPDATED,
+                            payload=room_snapshot.model_dump(),
+                        ),
+                        exclude_connection=connection.connection_id,
+                    )
+
+                    logger.info(
+                        "JOIN_ROOM_OK: room_id=%s, code=%s, user=%s, connection=%s",
+                        result.room_snapshot.room_id,
+                        payload.room_code,
+                        user_id,
+                        connection.connection_id,
+                    )
+                else:
+                    # Send error response
+                    await manager.send_to_connection(
+                        connection.connection_id,
+                        WSServerMessage(
+                            type=MessageType.JOIN_ROOM_ERROR,
+                            request_id=message.request_id,
+                            payload=ErrorPayload(
+                                error_code=result.error_code or "INTERNAL_ERROR",
+                                message=result.error_message or "Unknown error",
+                            ).model_dump(),
+                        ),
+                    )
+                    logger.warning(
+                        "JOIN_ROOM_ERROR: error_code=%s, message=%s, user=%s, connection=%s",
                         result.error_code,
                         result.error_message,
                         user_id,

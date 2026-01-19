@@ -9,6 +9,7 @@ The WebSocket system provides:
 - Distributed connection state via Upstash Redis
 - Automatic heartbeat/keepalive mechanism
 - Graceful connection cleanup
+- Room-based messaging and broadcasts
 
 ## Architecture
 
@@ -33,6 +34,7 @@ The WebSocket system provides:
 | Connection Manager | `app/services/websocket/manager.py` | Local + Redis state management |
 | WS Authenticator | `app/services/websocket/auth.py` | JWT validation for WebSocket |
 | Message Schemas | `app/schemas/ws.py` | Pydantic models for messages |
+| Room Service | `app/services/room/service.py` | Room creation, joining, state |
 | Redis Client | `app/dependencies/redis.py` | Upstash Redis singleton |
 
 ## Connection Flow
@@ -42,33 +44,64 @@ The WebSocket system provides:
 2. Server validates JWT against Supabase JWKS (before accepting)
 3. If invalid → close with code 4001 (AUTH_FAILED) or 4002 (AUTH_EXPIRED)
 4. If valid → accept connection, register in local + Redis state
-5. Server sends: {"type": "connected", "payload": {"connection_id": "...", "user_id": "...", "server_id": "..."}}
+5. Server sends: {"type": "connected", "payload": {...}}
 6. Client sends periodic ping, server responds with pong
 7. On disconnect → cleanup from local + Redis state
 ```
 
 ## Message Protocol
 
-**Note:** Server responses include all fields defined in the schema. Optional fields will be `null` when not applicable (e.g., `error: null`, `code: null` on success messages). Clients should handle `null` values appropriately.
+All messages follow a consistent structure:
 
-### Client → Server
+**Client → Server:**
+```json
+{
+  "type": "message_type",
+  "request_id": "optional-uuid-for-request-response",
+  "payload": { ... }
+}
+```
 
-**Ping (keepalive)**
+**Server → Client:**
+```json
+{
+  "type": "message_type",
+  "request_id": "echoed-from-request-if-applicable",
+  "payload": { ... }
+}
+```
+
+## Core Messages
+
+### Ping/Pong (Keepalive)
+
+**Client → Server: `ping`**
 ```json
 {
   "type": "ping",
-  "timestamp": "2024-01-15T10:30:00Z",
   "request_id": "abc123"
 }
 ```
 
-### Server → Client
+**Server → Client: `pong`**
+```json
+{
+  "type": "pong",
+  "request_id": "abc123",
+  "payload": {
+    "server_time": "2024-01-15T10:30:00Z"
+  }
+}
+```
 
-**Connected (on successful connection)**
+### Connected
+
+Sent immediately after successful connection:
+
+**Server → Client: `connected`**
 ```json
 {
   "type": "connected",
-  "timestamp": "2024-01-15T10:30:00Z",
   "payload": {
     "connection_id": "550e8400-e29b-41d4-a716-446655440000",
     "user_id": "user-uuid",
@@ -77,25 +110,18 @@ The WebSocket system provides:
 }
 ```
 
-**Pong (response to ping)**
-```json
-{
-  "type": "pong",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "request_id": "abc123",
-  "payload": {
-    "server_time": "2024-01-15T10:30:00Z"
-  }
-}
-```
+### Error
 
-**Error**
+Generic error for protocol-level issues (e.g., invalid message format):
+
+**Server → Client: `error`**
 ```json
 {
   "type": "error",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "error": "Invalid message format",
-  "code": 1007
+  "payload": {
+    "error_code": "INVALID_MESSAGE",
+    "message": "Invalid message format"
+  }
 }
 ```
 
@@ -126,16 +152,33 @@ The WebSocket system provides:
 | `ruleset_config` | object | No | Default: `{}` |
 
 **Server → Client: `create_room_ok`**
+
+Returns a `RoomSnapshot` directly as payload:
 ```json
 {
   "type": "create_room_ok",
-  "timestamp": "2024-01-15T10:30:00Z",
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
   "payload": {
     "room_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "code": "AB12CD",
-    "seat_index": 0,
-    "is_host": true
+    "status": "open",
+    "visibility": "private",
+    "ruleset_id": "classic",
+    "max_players": 4,
+    "seats": [
+      {
+        "seat_index": 0,
+        "user_id": "creator-user-id",
+        "display_name": "PlayerName",
+        "ready": "not_ready",
+        "connected": true,
+        "is_host": true
+      },
+      { "seat_index": 1, "user_id": null, "display_name": null, "ready": "not_ready", "connected": false, "is_host": false },
+      { "seat_index": 2, "user_id": null, "display_name": null, "ready": "not_ready", "connected": false, "is_host": false },
+      { "seat_index": 3, "user_id": null, "display_name": null, "ready": "not_ready", "connected": false, "is_host": false }
+    ],
+    "version": 0
   }
 }
 ```
@@ -144,7 +187,6 @@ The WebSocket system provides:
 ```json
 {
   "type": "create_room_error",
-  "timestamp": "2024-01-15T10:30:00Z",
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
   "payload": {
     "error_code": "VALIDATION_ERROR",
@@ -160,17 +202,138 @@ The WebSocket system provides:
 | `CODE_GENERATION_FAILED` | Could not generate unique room code |
 | `INTERNAL_ERROR` | Unexpected server error |
 
-## Message Types
+### Join Room
+
+**Client → Server: `join_room`**
+```json
+{
+  "type": "join_room",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "room_code": "AB12CD"
+  }
+}
+```
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `request_id` | UUID | Yes | Must be valid UUID v4 |
+| `room_code` | string | Yes | 6 characters, A-Z and 0-9 only |
+
+**Server → Client: `join_room_ok`**
+
+Returns a `RoomSnapshot` directly as payload:
+```json
+{
+  "type": "join_room_ok",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "room_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "code": "AB12CD",
+    "status": "open",
+    "visibility": "private",
+    "ruleset_id": "classic",
+    "max_players": 4,
+    "seats": [...],
+    "version": 1
+  }
+}
+```
+
+**Server → Client: `join_room_error`**
+```json
+{
+  "type": "join_room_error",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "error_code": "ROOM_NOT_FOUND",
+    "message": "Room not found"
+  }
+}
+```
+
+| Error Code | Description |
+|------------|-------------|
+| `VALIDATION_ERROR` | Invalid request_id or room_code format |
+| `ROOM_NOT_FOUND` | Invalid code or room doesn't exist |
+| `ROOM_CLOSED` | Room no longer joinable |
+| `ROOM_IN_GAME` | Room in game and user not a member |
+| `ROOM_FULL` | No available seats |
+| `INTERNAL_ERROR` | Unexpected server error |
+
+### Room Updated (Broadcast)
+
+Sent to all room members when room state changes (e.g., player joins):
+
+**Server → Client: `room_updated`**
+```json
+{
+  "type": "room_updated",
+  "payload": {
+    "room_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "code": "AB12CD",
+    "status": "open",
+    "visibility": "private",
+    "ruleset_id": "classic",
+    "max_players": 4,
+    "seats": [...],
+    "version": 2
+  }
+}
+```
+
+## Payload Schemas
+
+### RoomSnapshot
+
+Used as payload for `create_room_ok`, `join_room_ok`, and `room_updated`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `room_id` | string | UUID of the room |
+| `code` | string | 6-character join code |
+| `status` | string | `open`, `in_game`, or `closed` |
+| `visibility` | string | `private` |
+| `ruleset_id` | string | Game ruleset identifier |
+| `max_players` | number | 2-4 |
+| `seats` | array | List of SeatSnapshot objects |
+| `version` | number | Optimistic locking version |
+
+### SeatSnapshot
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `seat_index` | number | 0-3 |
+| `user_id` | string/null | User ID if occupied |
+| `display_name` | string/null | Player display name |
+| `ready` | string | `not_ready` or `ready` |
+| `connected` | boolean | Whether player is connected |
+| `is_host` | boolean | Whether this seat is the host |
+
+### ErrorPayload
+
+Used for all error messages (`error`, `create_room_error`, `join_room_error`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `error_code` | string | Machine-readable error code |
+| `message` | string | Human-readable description |
+
+## Message Types Summary
 
 | Type | Direction | Description |
 |------|-----------|-------------|
 | `ping` | Client → Server | Keepalive request |
 | `pong` | Server → Client | Keepalive response |
 | `connected` | Server → Client | Connection acknowledgment |
-| `error` | Server → Client | Error notification |
+| `error` | Server → Client | Protocol-level error |
 | `create_room` | Client → Server | Create a new game room |
 | `create_room_ok` | Server → Client | Room creation succeeded |
 | `create_room_error` | Server → Client | Room creation failed |
+| `join_room` | Client → Server | Join an existing room |
+| `join_room_ok` | Server → Client | Room join succeeded |
+| `join_room_error` | Server → Client | Room join failed |
+| `room_updated` | Server → Client | Room state changed (broadcast) |
 
 ## Close Codes
 
@@ -184,15 +347,18 @@ The WebSocket system provides:
 
 ## Redis State
 
-Redis stores minimal state for user presence tracking using atomic counters.
+Redis stores state for user presence and room data.
 
 ### Keys
 
 | Key Pattern | Type | Description |
 |-------------|------|-------------|
-| `ws:user:{user_id}:conn_count` | Integer | Atomic connection counter for a user |
+| `ws:user:{user_id}:conn_count` | Integer | Connection counter per user |
+| `room:{room_id}:meta` | Hash | Room metadata |
+| `room:{room_id}:seats` | Hash | Seat occupancy data |
+| `room:{room_id}:presence` | Set | Connected user IDs (TTL: 300s) |
 
-Connection details and heartbeats are tracked locally per server. Redis uses atomic `INCR`/`DECR` operations on connection counters to safely track presence across multi-server deployments. When a user's count reaches 0, the key is deleted.
+See `docs/redis.md` for detailed Redis schema documentation.
 
 ## Configuration
 
@@ -230,11 +396,43 @@ ws.onmessage = (event) => {
       ws.send(JSON.stringify({ type: 'ping' }));
     }, 25000);
   }
+
+  if (message.type === 'create_room_ok') {
+    const room = message.payload; // RoomSnapshot
+    console.log('Room created:', room.code);
+  }
+
+  if (message.type === 'join_room_ok') {
+    const room = message.payload; // RoomSnapshot
+    console.log('Joined room:', room.code);
+  }
+
+  if (message.type === 'room_updated') {
+    const room = message.payload; // RoomSnapshot
+    console.log('Room updated:', room);
+  }
 };
 
-ws.onclose = (event) => {
-  console.log('Disconnected:', event.code, event.reason);
-};
+// Create a room
+ws.send(JSON.stringify({
+  type: 'create_room',
+  request_id: crypto.randomUUID(),
+  payload: {
+    visibility: 'private',
+    max_players: 4,
+    ruleset_id: 'classic',
+    ruleset_config: {}
+  }
+}));
+
+// Join a room
+ws.send(JSON.stringify({
+  type: 'join_room',
+  request_id: crypto.randomUUID(),
+  payload: {
+    room_code: 'AB12CD'
+  }
+}));
 ```
 
 ### wscat (CLI testing)
@@ -248,7 +446,13 @@ wscat -c "ws://localhost:8000/api/v1/ws?token=YOUR_JWT_TOKEN"
 
 # Send ping
 > {"type": "ping"}
-< {"type": "pong", ...}
+< {"type": "pong", "payload": {"server_time": "..."}}
+
+# Create room
+> {"type": "create_room", "request_id": "550e8400-e29b-41d4-a716-446655440000", "payload": {"visibility": "private", "max_players": 4, "ruleset_id": "classic"}}
+
+# Join room
+> {"type": "join_room", "request_id": "660e8400-e29b-41d4-a716-446655440001", "payload": {"room_code": "AB12CD"}}
 ```
 
 ## Connection Manager API
@@ -287,21 +491,19 @@ count = await manager.send_to_room(room_id, message, exclude_connection=None)
 To add new message types:
 
 1. Add type to `MessageType` enum in `app/schemas/ws.py`
-2. Create payload schema if needed
+2. Create payload schema if needed (or reuse `ErrorPayload`, `RoomSnapshot`)
 3. Add handler in `app/routers/ws.py` message loop
 
 Example:
 ```python
 # In app/schemas/ws.py
 class MessageType(str, Enum):
-    PING = "ping"
-    PONG = "pong"
-    CONNECTED = "connected"
-    ERROR = "error"
-    GAME_UPDATE = "game_update"  # New type
+    # ... existing types ...
+    LEAVE_ROOM = "leave_room"
+    LEAVE_ROOM_OK = "leave_room_ok"
 
 # In app/routers/ws.py
-if message.type == MessageType.GAME_UPDATE:
-    # Handle game update
+elif message.type == MessageType.LEAVE_ROOM:
+    # Handle leave room
     pass
 ```

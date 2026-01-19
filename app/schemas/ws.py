@@ -15,6 +15,10 @@ class MessageType(str, Enum):
     CREATE_ROOM = "create_room"
     CREATE_ROOM_OK = "create_room_ok"
     CREATE_ROOM_ERROR = "create_room_error"
+    JOIN_ROOM = "join_room"
+    JOIN_ROOM_OK = "join_room_ok"
+    JOIN_ROOM_ERROR = "join_room_error"
+    ROOM_UPDATED = "room_updated"
 
 
 class WSCloseCode:
@@ -39,7 +43,6 @@ class WSClientMessage(BaseModel):
     """Message sent from client to server."""
 
     type: MessageType
-    timestamp: datetime | None = None
     request_id: str | None = None
     payload: dict[str, Any] | None = None
 
@@ -48,11 +51,11 @@ class WSServerMessage(BaseModel):
     """Message sent from server to client."""
 
     type: MessageType
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
     request_id: str | None = None
     payload: dict[str, Any] | None = None
-    error: str | None = None
-    code: int | None = None
+
+
+# --- Payload schemas ---
 
 
 class ConnectedPayload(BaseModel):
@@ -66,7 +69,14 @@ class ConnectedPayload(BaseModel):
 class PongPayload(BaseModel):
     """Payload for the 'pong' message."""
 
-    server_time: datetime = Field(default_factory=datetime.utcnow)
+    server_time: datetime = Field(default_factory=lambda: datetime.now())
+
+
+class ErrorPayload(BaseModel):
+    """Payload for error messages (ERROR, CREATE_ROOM_ERROR, JOIN_ROOM_ERROR)."""
+
+    error_code: str
+    message: str
 
 
 class CreateRoomPayload(BaseModel):
@@ -78,17 +88,34 @@ class CreateRoomPayload(BaseModel):
     ruleset_config: dict[str, Any] = Field(default_factory=dict)
 
 
-class CreateRoomOkPayload(BaseModel):
-    """Payload for the 'create_room_ok' message to client."""
+class JoinRoomPayload(BaseModel):
+    """Payload for the 'join_room' message from client."""
+
+    room_code: str = Field(..., min_length=6, max_length=6, pattern="^[A-Z0-9]{6}$")
+
+
+class SeatSnapshot(BaseModel):
+    """Snapshot of a single seat in a room."""
+
+    seat_index: int
+    user_id: str | None = None
+    display_name: str | None = None
+    ready: str = "not_ready"
+    connected: bool = False
+    is_host: bool = False
+
+
+class RoomSnapshot(BaseModel):
+    """Authoritative room snapshot for lobby rendering.
+
+    Used as payload for CREATE_ROOM_OK, JOIN_ROOM_OK, and ROOM_UPDATED messages.
+    """
 
     room_id: str
     code: str
-    seat_index: int
-    is_host: bool
-
-
-class CreateRoomErrorPayload(BaseModel):
-    """Payload for the 'create_room_error' message to client."""
-
-    error_code: str
-    message: str
+    status: str
+    visibility: str
+    ruleset_id: str
+    max_players: int
+    seats: list[SeatSnapshot]
+    version: int = 0
