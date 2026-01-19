@@ -109,9 +109,6 @@ specs/
 |------|-----------|-------------|
 | `ping` / `pong` | Client ↔ Server | Keepalive heartbeat |
 | `connected` | Server → Client | Connection acknowledgment |
-| `create_room` | Client → Server | Create a new game room |
-| `create_room_ok` | Server → Client | Room created successfully |
-| `create_room_error` | Server → Client | Room creation failed |
 
 See [docs/websockets.md](docs/websockets.md) for protocol details.
 

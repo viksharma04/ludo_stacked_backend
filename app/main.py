@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.dependencies.redis import close_redis_client
-from app.routers import auth, profile, ws
+from app.routers import auth, profile, rooms, ws
 from app.services.websocket.manager import get_connection_manager
 
 logger = logging.getLogger(__name__)
@@ -49,8 +49,9 @@ logger.debug("CORS configured with origins: %s", settings.CORS_ORIGINS)
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(profile.router, prefix="/api/v1")
+app.include_router(rooms.router, prefix="/api/v1")
 app.include_router(ws.router, prefix="/api/v1")
-logger.debug("Routers registered: /api/v1/auth, /api/v1/profile, /api/v1/ws")
+logger.debug("Routers registered: /api/v1/auth, /api/v1/profile, /api/v1/rooms, /api/v1/ws")
 
 
 @app.get("/")

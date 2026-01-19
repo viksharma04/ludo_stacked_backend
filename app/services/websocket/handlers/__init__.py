@@ -60,7 +60,7 @@ async def dispatch(ctx: HandlerContext) -> HandlerResult | None:
 
 
 # Import handlers to trigger registration
-from . import create_room, join_room, ping  # noqa: E402, F401
+from . import ping  # noqa: E402, F401
 
 __all__ = [
     "HandlerContext",

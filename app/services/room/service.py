@@ -217,6 +217,119 @@ class RoomService:
                 error_message="Failed to create room",
             )
 
+    async def find_or_create_room(
+        self,
+        user_id: str,
+        max_players: int,
+        visibility: str = "private",
+        ruleset_id: str = "classic",
+        ruleset_config: dict[str, Any] | None = None,
+    ) -> CreateRoomResult:
+        """Find existing open room or create a new one.
+
+        If the user already owns an open room, returns that room's info.
+        Otherwise, creates a new room with the user as owner at seat 0.
+
+        Args:
+            user_id: The user creating/finding the room.
+            max_players: Maximum number of players (2-4).
+            visibility: Room visibility (currently only "private").
+            ruleset_id: The ruleset to use (currently only "classic").
+            ruleset_config: Optional ruleset configuration.
+
+        Returns:
+            CreateRoomResult with room details on success, or error info on failure.
+        """
+        if ruleset_config is None:
+            ruleset_config = {}
+
+        try:
+            # Call Supabase RPC
+            response = self._supabase.rpc(
+                "find_or_create_room",
+                {
+                    "p_user_id": user_id,
+                    "p_max_players": max_players,
+                    "p_visibility": visibility,
+                    "p_ruleset_id": ruleset_id,
+                    "p_ruleset_config": ruleset_config,
+                },
+            ).execute()
+
+            if not response.data:
+                logger.error("Empty response from find_or_create_room RPC")
+                return CreateRoomResult(
+                    success=False,
+                    error_code="INTERNAL_ERROR",
+                    error_message="Empty response from database",
+                )
+
+            result = response.data
+
+            # Check if RPC returned an error
+            if not result.get("success"):
+                error_code = result.get("error", "INTERNAL_ERROR")
+                error_message = result.get("message", "Unknown error")
+                logger.warning(
+                    "find_or_create_room RPC failed for user %s: %s - %s",
+                    user_id,
+                    error_code,
+                    error_message,
+                )
+                return CreateRoomResult(
+                    success=False,
+                    error_code=error_code,
+                    error_message=error_message,
+                )
+
+            # Extract room data
+            data = result.get("data", {})
+            room_id = str(data.get("room_id"))
+            code = str(data.get("code", ""))
+            seat_index = data.get("seat_index")
+            is_host = data.get("is_host")
+            cached = bool(result.get("cached", False))
+
+            logger.info(
+                "Room found/created: room_id=%s, code=%s, user=%s, cached=%s",
+                room_id,
+                code,
+                user_id,
+                cached,
+            )
+
+            # Initialize Redis state only for newly created rooms
+            if not cached:
+                display_name = self._get_user_display_name(user_id)
+
+                await self._initialize_redis_state(
+                    room_id=room_id,
+                    owner_user_id=user_id,
+                    owner_display_name=display_name,
+                    code=code,
+                    visibility=visibility,
+                    max_players=max_players,
+                    ruleset_id=ruleset_id,
+                    ruleset_config=ruleset_config,
+                )
+
+            return CreateRoomResult(
+                success=True,
+                room_id=room_id,
+                code=code,
+                seat_index=seat_index,
+                is_host=is_host,
+                cached=cached,
+            )
+
+        except Exception as e:
+            logger.exception("Error in find_or_create_room for user %s: %s", user_id, e)
+            return CreateRoomResult(
+                success=False,
+                error_code="INTERNAL_ERROR",
+                error_message="Failed to create room",
+            )
+
     async def _initialize_redis_state(
         self,
         room_id: str,
