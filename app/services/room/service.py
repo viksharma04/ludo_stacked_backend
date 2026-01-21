@@ -674,15 +674,34 @@ class RoomService:
                     error_message="Failed to allocate seat",
                 )
 
-            # Update Redis
-            await self._update_seat_in_redis(
-                room_id=room_id,
-                seat_index=empty_seat_index,
-                user_id=user_id,
-                display_name=display_name,
-                is_host=False,
-                connected=True,
-            )
+            # Update Redis; if this fails, roll back the DB seat allocation
+            try:
+                await self._update_seat_in_redis(
+                    room_id=room_id,
+                    seat_index=empty_seat_index,
+                    user_id=user_id,
+                    display_name=display_name,
+                    is_host=False,
+                    connected=True,
+                )
+            except Exception as exc:  # pragma: no cover - defensive error handling
+                logger.exception(
+                    "Failed to update Redis for room %s seat %d after DB update; attempting rollback",
+                    room_id,
+                    empty_seat_index,
+                )
+                rollback_ok = await self._update_seat_in_db(room_id, empty_seat_index, None)
+                if not rollback_ok:
+                    logger.error(
+                        "Failed to rollback DB seat allocation for room %s seat %d after Redis failure",
+                        room_id,
+                        empty_seat_index,
+                    )
+                return JoinRoomResult(
+                    success=False,
+                    error_code="INTERNAL_ERROR",
+                    error_message="Failed to allocate seat",
+                )
 
             # Register presence
             presence_key = f"room:{room_id}:presence"
@@ -709,17 +728,32 @@ class RoomService:
                 error_message="Failed to join room",
             )
 
-    async def _update_seat_in_db(self, room_id: str, seat_index: int, user_id: str) -> bool:
-        """Update a seat in the database."""
+    async def _update_seat_in_db(self, room_id: str, seat_index: int, user_id: str | None) -> bool:
+        """Update a seat in the database.
+        
+        If user_id is None, clears the seat (for rollback).
+        Otherwise, assigns the seat to the user (optimistic lock).
+        """
         try:
-            response = await (
-                self._supabase.table("room_seats")
-                .update({"user_id": user_id})
-                .eq("room_id", room_id)
-                .eq("seat_index", seat_index)
-                .is_("user_id", "null")  # Only update if seat is empty (optimistic lock)
-                .execute()
-            )
+            if user_id is None:
+                # Rollback: clear the seat without optimistic lock check
+                response = await (
+                    self._supabase.table("room_seats")
+                    .update({"user_id": None})
+                    .eq("room_id", room_id)
+                    .eq("seat_index", seat_index)
+                    .execute()
+                )
+            else:
+                # Normal assignment: only update if seat is empty (optimistic lock)
+                response = await (
+                    self._supabase.table("room_seats")
+                    .update({"user_id": user_id})
+                    .eq("room_id", room_id)
+                    .eq("seat_index", seat_index)
+                    .is_("user_id", "null")
+                    .execute()
+                )
             # Check if a row was actually updated
             if response.data and len(response.data) > 0:
                 return True
@@ -787,6 +821,7 @@ class RoomService:
                     seat_data["connected"] = connected
                     await self._redis.hset(seats_key, f"seat:{seat_index}", json.dumps(seat_data))
                 except json.JSONDecodeError:
+                    # Ignore invalid JSON in seat data; atomic update already attempted
                     pass
 
     async def _update_seat_ready(self, room_id: str, seat_index: int, ready_state: str) -> None:
@@ -821,6 +856,7 @@ class RoomService:
                     seat_data["ready"] = ready_state
                     await self._redis.hset(seats_key, f"seat:{seat_index}", json.dumps(seat_data))
                 except json.JSONDecodeError:
+                    # Ignore invalid JSON in seat data; atomic update already attempted
                     pass
 
     async def _check_all_ready(self, room_id: str) -> bool:
