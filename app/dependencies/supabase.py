@@ -58,9 +58,19 @@ def get_async_supabase() -> AsyncClient:
 
 
 async def close_async_supabase() -> None:
-    """Close the async Supabase client."""
+    """Close the async Supabase client and its underlying HTTP connections."""
     global _async_supabase
     if _async_supabase is not None:
-        # AsyncClient doesn't have an explicit close method, but we clear the reference
+        # Close underlying httpx client to prevent connection leaks
+        # The AsyncClient wraps httpx AsyncClient which needs explicit closure
+        try:
+            if hasattr(_async_supabase, "postgrest") and hasattr(
+                _async_supabase.postgrest, "session"
+            ):
+                await _async_supabase.postgrest.session.aclose()
+                logger.debug("Closed Postgrest httpx session")
+        except Exception as e:
+            logger.warning("Error closing Postgrest session: %s", e)
+
         _async_supabase = None
         logger.info("Async Supabase client closed")
