@@ -19,6 +19,7 @@ from app.schemas.ws import (
 from app.services.room.service import RoomSnapshotData, get_room_service
 from app.services.websocket.auth import get_ws_authenticator
 from app.services.websocket.handlers import HandlerContext, dispatch
+from app.services.websocket.handlers.base import snapshot_to_pydantic
 from app.services.websocket.manager import get_connection_manager
 
 logger = logging.getLogger(__name__)
@@ -29,30 +30,6 @@ router = APIRouter(tags=["websocket"])
 MAX_MESSAGE_SIZE = 64 * 1024  # 64 KB
 MAX_MESSAGES_PER_SECOND = 10
 RATE_LIMIT_WINDOW = 1.0  # seconds
-
-
-def _to_room_snapshot(data: RoomSnapshotData) -> RoomSnapshot:
-    """Convert RoomSnapshotData to RoomSnapshot schema."""
-    return RoomSnapshot(
-        room_id=data.room_id,
-        code=data.code,
-        status=data.status,
-        visibility=data.visibility,
-        ruleset_id=data.ruleset_id,
-        max_players=data.max_players,
-        seats=[
-            SeatSnapshot(
-                seat_index=s.seat_index,
-                user_id=s.user_id,
-                display_name=s.display_name,
-                ready=s.ready,
-                connected=s.connected,
-                is_host=s.is_host,
-            )
-            for s in data.seats
-        ],
-        version=data.version,
-    )
 
 
 class RateLimiter:
@@ -138,19 +115,19 @@ async def websocket_endpoint(
         await websocket.close(code=close_code)
         return
 
-    # Update seat connected status and get fresh snapshot
+    # Accept the connection first
+    await websocket.accept()
+    logger.info("WS connection accepted for user %s in room %s", user_id, room_code)
+
+    # Update seat connected status and get fresh snapshot after successful accept
     await room_service.update_seat_connected_by_user(room_id, user_id, connected=True)
     room_snapshot_data = await room_service.get_room_snapshot(room_id)
     if not room_snapshot_data:
-        logger.error("Room %s not found in Redis after access validation", room_id)
+        logger.error("Room %s not found in Redis after connection accepted", room_id)
         await websocket.close(code=WSCloseCode.ROOM_NOT_FOUND)
         return
 
-    room_snapshot = _to_room_snapshot(room_snapshot_data)
-
-    # Accept the connection
-    await websocket.accept()
-    logger.info("WS connection accepted for user %s in room %s", user_id, room_code)
+    room_snapshot = snapshot_to_pydantic(room_snapshot_data)
 
     # Register with connection manager (sends "connected" message to user)
     manager = get_connection_manager()
@@ -326,16 +303,6 @@ async def websocket_endpoint(
         # Clean up rate limiter for this connection
         _rate_limiter.remove(connection.connection_id)
 
-        # Disconnect from manager (handles seat connected update and ready reset)
+        # Disconnect from manager (handles seat connected update, ready reset,
+        # and broadcasting updated room state to remaining members)
         await manager.disconnect(connection.connection_id)
-
-        # Broadcast updated room state to remaining members
-        updated_snapshot_data = await room_service.get_room_snapshot(room_id)
-        if updated_snapshot_data:
-            await manager.send_to_room(
-                room_id,
-                WSServerMessage(
-                    type=MessageType.ROOM_UPDATED,
-                    payload=_to_room_snapshot(updated_snapshot_data).model_dump(),
-                ),
-            )
