@@ -21,6 +21,11 @@ DECLARE
     v_max_attempts int := 10;
     i int;
 BEGIN
+    -- Security check: ensure p_user_id matches the authenticated user
+    IF p_user_id != auth.uid() THEN
+        RAISE EXCEPTION 'User ID mismatch: cannot create room for another user';
+    END IF;
+
     -- Check for existing open room owned by user
     SELECT room_id, code INTO v_existing_room
     FROM rooms
@@ -57,7 +62,9 @@ BEGIN
             );
         END IF;
 
-        v_code := upper(substring(md5(random()::text || clock_timestamp()::text) from 1 for 6));
+        -- Generate 8-character alphanumeric code for better collision resistance
+        -- MD5 hash provides hex chars (0-9, A-F), giving 16^8 = 4.3B possible codes
+        v_code := upper(substring(md5(random()::text || clock_timestamp()::text) from 1 for 8));
 
         EXIT WHEN NOT EXISTS (
             SELECT 1 FROM rooms WHERE code = v_code AND status IN ('open', 'in_game')

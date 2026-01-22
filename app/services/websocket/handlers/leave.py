@@ -52,9 +52,12 @@ async def handle_leave_room(ctx: HandlerContext) -> HandlerResult:
         return HandlerResult(
             success=True,
             response=WSServerMessage(
-                type=MessageType.ROOM_UPDATED,
+                type=MessageType.ROOM_CLOSED,
                 request_id=ctx.message.request_id,
-                payload=None,
+                payload=RoomClosedPayload(
+                    reason="host_left",
+                    room_id=room_id,
+                ).model_dump(),
             ),
             broadcast=WSServerMessage(
                 type=MessageType.ROOM_CLOSED,
