@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -12,9 +14,10 @@ class MessageType(str, Enum):
     PONG = "pong"
     CONNECTED = "connected"
     ERROR = "error"
-    CREATE_ROOM = "create_room"
-    CREATE_ROOM_OK = "create_room_ok"
-    CREATE_ROOM_ERROR = "create_room_error"
+    ROOM_UPDATED = "room_updated"
+    TOGGLE_READY = "toggle_ready"
+    LEAVE_ROOM = "leave_room"
+    ROOM_CLOSED = "room_closed"
 
 
 class WSCloseCode:
@@ -33,13 +36,14 @@ class WSCloseCode:
     # Custom application codes (4000-4999)
     AUTH_FAILED = 4001
     AUTH_EXPIRED = 4002
+    ROOM_NOT_FOUND = 4003
+    ROOM_ACCESS_DENIED = 4004
 
 
 class WSClientMessage(BaseModel):
     """Message sent from client to server."""
 
     type: MessageType
-    timestamp: datetime | None = None
     request_id: str | None = None
     payload: dict[str, Any] | None = None
 
@@ -48,11 +52,38 @@ class WSServerMessage(BaseModel):
     """Message sent from server to client."""
 
     type: MessageType
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
     request_id: str | None = None
     payload: dict[str, Any] | None = None
-    error: str | None = None
-    code: int | None = None
+
+
+# --- Payload schemas ---
+
+
+class SeatSnapshot(BaseModel):
+    """Snapshot of a single seat in a room."""
+
+    seat_index: int
+    user_id: str | None = None
+    display_name: str | None = None
+    ready: str = "not_ready"
+    connected: bool = False
+    is_host: bool = False
+
+
+class RoomSnapshot(BaseModel):
+    """Authoritative room snapshot for lobby rendering.
+
+    Used as payload for CREATE_ROOM_OK, JOIN_ROOM_OK, and ROOM_UPDATED messages.
+    """
+
+    room_id: str
+    code: str
+    status: str
+    visibility: str
+    ruleset_id: str
+    max_players: int
+    seats: list[SeatSnapshot]
+    version: int = 0
 
 
 class ConnectedPayload(BaseModel):
@@ -61,34 +92,30 @@ class ConnectedPayload(BaseModel):
     connection_id: str
     user_id: str
     server_id: str
+    room: RoomSnapshot
 
 
 class PongPayload(BaseModel):
     """Payload for the 'pong' message."""
 
-    server_time: datetime = Field(default_factory=datetime.utcnow)
+    server_time: datetime = Field(default_factory=lambda: datetime.now())
 
 
-class CreateRoomPayload(BaseModel):
-    """Payload for the 'create_room' message from client."""
-
-    visibility: Literal["private"]
-    max_players: int = Field(ge=2, le=4, default=4)
-    ruleset_id: Literal["classic"]
-    ruleset_config: dict[str, Any] = Field(default_factory=dict)
-
-
-class CreateRoomOkPayload(BaseModel):
-    """Payload for the 'create_room_ok' message to client."""
-
-    room_id: str
-    code: str
-    seat_index: int
-    is_host: bool
-
-
-class CreateRoomErrorPayload(BaseModel):
-    """Payload for the 'create_room_error' message to client."""
+class ErrorPayload(BaseModel):
+    """Payload for error messages (ERROR, CREATE_ROOM_ERROR, JOIN_ROOM_ERROR)."""
 
     error_code: str
     message: str
+
+
+class RoomClosedPayload(BaseModel):
+    """Payload sent when host closes the room."""
+
+    reason: str = "host_left"
+    room_id: str
+
+
+class JoinRoomPayload(BaseModel):
+    """Payload for the 'join_room' message from client."""
+
+    room_code: str = Field(..., min_length=6, max_length=6, pattern="^[A-Z0-9]{6}$")

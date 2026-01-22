@@ -69,6 +69,7 @@ httpx==0.28.1
     # via
     #   fastapi
     #   fastapi-cloud-cli
+    #   ludo-stacked-backend
     #   postgrest
     #   storage3
     #   supabase

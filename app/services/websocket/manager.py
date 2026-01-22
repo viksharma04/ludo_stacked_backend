@@ -1,9 +1,10 @@
 import asyncio
+import contextlib
 import logging
 import os
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import WebSocket
 from upstash_redis.asyncio import Redis
@@ -13,10 +14,15 @@ from app.dependencies.redis import get_redis_client
 from app.schemas.ws import (
     ConnectedPayload,
     MessageType,
+    RoomSnapshot,
+    SeatSnapshot,
     WSServerMessage,
 )
 
 logger = logging.getLogger(__name__)
+
+# Send timeout in seconds
+SEND_TIMEOUT = 10.0
 
 
 @dataclass
@@ -26,8 +32,8 @@ class Connection:
     connection_id: str
     websocket: WebSocket
     user_id: str
-    connected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    last_heartbeat: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    connected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_heartbeat: datetime = field(default_factory=lambda: datetime.now(UTC))
     room_id: str | None = None
 
 
@@ -64,18 +70,22 @@ class ConnectionManager:
     def _redis_user_conn_count_key(self, user_id: str) -> str:
         return f"ws:user:{user_id}:conn_count"
 
-    async def connect(self, websocket: WebSocket, user_id: str) -> Connection:
-        """Register a new WebSocket connection.
+    async def connect(
+        self, websocket: WebSocket, user_id: str, room_id: str, room_snapshot: RoomSnapshot
+    ) -> Connection:
+        """Register a new WebSocket connection and subscribe to room.
 
         Args:
             websocket: The WebSocket instance.
             user_id: The authenticated user's ID.
+            room_id: The room to subscribe the connection to.
+            room_snapshot: The current room state to include in connected message.
 
         Returns:
             The created Connection object.
         """
         connection_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         connection = Connection(
             connection_id=connection_id,
@@ -83,6 +93,7 @@ class ConnectionManager:
             user_id=user_id,
             connected_at=now,
             last_heartbeat=now,
+            room_id=room_id,
         )
 
         # Local storage
@@ -91,20 +102,28 @@ class ConnectionManager:
             self._user_connections[user_id] = set()
         self._user_connections[user_id].add(connection_id)
 
+        # Subscribe to room
+        if room_id not in self._room_connections:
+            self._room_connections[room_id] = set()
+        self._room_connections[room_id].add(connection_id)
+
         # Redis: increment user's connection count (atomic operation for multi-server safety)
         try:
             await self._redis.incr(self._redis_user_conn_count_key(user_id))
         except Exception as e:
-            logger.error("Failed to increment connection count for user %s in Redis: %s", user_id, e)
+            logger.error(
+                "Failed to increment connection count for user %s in Redis: %s", user_id, e
+            )
 
         logger.info(
-            "Connection %s established for user %s on server %s",
+            "Connection %s established for user %s on server %s, subscribed to room %s",
             connection_id,
             user_id,
             self._server_id,
+            room_id,
         )
 
-        # Send connected acknowledgment
+        # Send connected acknowledgment with room snapshot
         await self.send_to_connection(
             connection_id,
             WSServerMessage(
@@ -113,6 +132,7 @@ class ConnectionManager:
                     connection_id=connection_id,
                     user_id=user_id,
                     server_id=self._server_id,
+                    room=room_snapshot,
                 ).model_dump(),
             ),
         )
@@ -121,6 +141,8 @@ class ConnectionManager:
 
     async def disconnect(self, connection_id: str) -> None:
         """Remove a WebSocket connection from local and Redis storage.
+
+        Also resets the user's ready state and broadcasts room update if needed.
 
         Args:
             connection_id: The connection to remove.
@@ -131,10 +153,56 @@ class ConnectionManager:
             return
 
         user_id = connection.user_id
+        room_id = connection.room_id
 
-        # Unsubscribe from room if subscribed
-        if connection.room_id:
-            await self._unsubscribe_from_room_internal(connection_id, connection.room_id)
+        # Reset ready state and broadcast if user was in a room
+        if room_id:
+            # Import here to avoid circular imports
+            from app.services.room.service import get_room_service
+
+            room_service = get_room_service()
+
+            # Update connected status to false
+            await room_service.update_seat_connected_by_user(room_id, user_id, connected=False)
+
+            # Reset ready state if needed
+            needs_broadcast = await room_service.reset_ready_on_disconnect(room_id, user_id)
+
+            # Broadcast room update to remaining players
+            if needs_broadcast:
+                snapshot = await room_service.get_room_snapshot(room_id)
+                if snapshot:
+                    pydantic_snapshot = RoomSnapshot(
+                        room_id=snapshot.room_id,
+                        code=snapshot.code,
+                        status=snapshot.status,
+                        visibility=snapshot.visibility,
+                        ruleset_id=snapshot.ruleset_id,
+                        max_players=snapshot.max_players,
+                        seats=[
+                            SeatSnapshot(
+                                seat_index=seat.seat_index,
+                                user_id=seat.user_id,
+                                display_name=seat.display_name,
+                                ready=seat.ready,
+                                connected=seat.connected,
+                                is_host=seat.is_host,
+                            )
+                            for seat in snapshot.seats
+                        ],
+                        version=snapshot.version,
+                    )
+                    await self.send_to_room(
+                        room_id,
+                        WSServerMessage(
+                            type=MessageType.ROOM_UPDATED,
+                            payload=pydantic_snapshot.model_dump(),
+                        ),
+                        exclude_connection=connection_id,
+                    )
+
+            # Unsubscribe from room
+            await self._unsubscribe_from_room_internal(connection_id, room_id)
 
         # Remove from local user connections
         if user_id in self._user_connections:
@@ -149,7 +217,9 @@ class ConnectionManager:
             if count is not None and int(count) <= 0:
                 await self._redis.delete(self._redis_user_conn_count_key(user_id))
         except Exception as e:
-            logger.error("Failed to decrement connection count for user %s in Redis: %s", user_id, e)
+            logger.error(
+                "Failed to decrement connection count for user %s in Redis: %s", user_id, e
+            )
 
         logger.info("Connection %s disconnected for user %s", connection_id, user_id)
 
@@ -161,12 +231,12 @@ class ConnectionManager:
         """
         connection = self._connections.get(connection_id)
         if connection:
-            connection.last_heartbeat = datetime.now(timezone.utc)
+            connection.last_heartbeat = datetime.now(UTC)
             logger.debug("Heartbeat updated for connection %s", connection_id)
 
     async def cleanup_stale_connections(self) -> None:
         """Remove connections that have exceeded the timeout period."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timeout = self._settings.WS_CONNECTION_TIMEOUT
         stale_connections = []
 
@@ -182,17 +252,28 @@ class ConnectionManager:
                     elapsed,
                 )
 
-        for conn_id in stale_connections:
+        if not stale_connections:
+            return
+
+        # Close all stale websockets in parallel
+        async def close_websocket(conn_id: str) -> None:
             connection = self._connections.get(conn_id)
             if connection:
                 try:
-                    await connection.websocket.close(code=1001)
+                    async with asyncio.timeout(SEND_TIMEOUT):
+                        await connection.websocket.close(code=1001)
+                except TimeoutError:
+                    logger.warning("Timeout closing stale websocket %s", conn_id)
                 except Exception as e:
                     logger.debug("Error closing stale websocket %s: %s", conn_id, e)
-            await self.disconnect(conn_id)
 
-        if stale_connections:
-            logger.info("Cleaned up %d stale connections", len(stale_connections))
+        # Close websockets in parallel
+        await asyncio.gather(*[close_websocket(conn_id) for conn_id in stale_connections])
+
+        # Disconnect all stale connections in parallel
+        await asyncio.gather(*[self.disconnect(conn_id) for conn_id in stale_connections])
+
+        logger.info("Cleaned up %d stale connections", len(stale_connections))
 
     async def start_cleanup_task(self) -> None:
         """Start the periodic cleanup task for stale connections."""
@@ -219,10 +300,8 @@ class ConnectionManager:
         """Stop the periodic cleanup task."""
         if self._cleanup_task is not None:
             self._cleanup_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
             self._cleanup_task = None
             logger.info("Cleanup task stopped")
 
@@ -230,19 +309,26 @@ class ConnectionManager:
         """Close all active WebSocket connections gracefully."""
         logger.info("Closing all %d connections", len(self._connections))
         conn_ids = list(self._connections.keys())
-        for conn_id in conn_ids:
+
+        # Close all websockets in parallel
+        async def close_websocket(conn_id: str) -> None:
             connection = self._connections.get(conn_id)
             if connection:
                 try:
-                    await connection.websocket.close(code=1001)
+                    async with asyncio.timeout(SEND_TIMEOUT):
+                        await connection.websocket.close(code=1001)
+                except TimeoutError:
+                    logger.warning("Timeout closing websocket %s", conn_id)
                 except Exception as e:
                     logger.debug("Error closing websocket %s: %s", conn_id, e)
-            await self.disconnect(conn_id)
 
-    async def send_to_connection(
-        self, connection_id: str, message: WSServerMessage
-    ) -> bool:
-        """Send a message to a specific connection.
+        await asyncio.gather(*[close_websocket(conn_id) for conn_id in conn_ids])
+
+        # Disconnect all in parallel
+        await asyncio.gather(*[self.disconnect(conn_id) for conn_id in conn_ids])
+
+    async def send_to_connection(self, connection_id: str, message: WSServerMessage) -> bool:
+        """Send a message to a specific connection with timeout.
 
         Args:
             connection_id: The target connection.
@@ -257,8 +343,13 @@ class ConnectionManager:
             return False
 
         try:
-            await connection.websocket.send_json(message.model_dump(mode="json"))
+            async with asyncio.timeout(SEND_TIMEOUT):
+                await connection.websocket.send_json(message.model_dump(mode="json"))
             return True
+        except TimeoutError:
+            logger.warning("Timeout sending to connection %s", connection_id)
+            await self.disconnect(connection_id)
+            return False
         except Exception as e:
             logger.warning("Failed to send to connection %s: %s", connection_id, e)
             await self.disconnect(connection_id)
