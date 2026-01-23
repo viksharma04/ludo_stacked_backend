@@ -134,6 +134,26 @@ def error_response(
     )
 
 
+def require_authenticated(ctx: "HandlerContext") -> HandlerResult | None:
+    """Check if connection is authenticated.
+
+    Args:
+        ctx: The handler context.
+
+    Returns:
+        HandlerResult with error if not authenticated, None if authenticated.
+    """
+    connection = ctx.manager.get_connection(ctx.connection_id)
+    if connection is None or not connection.authenticated:
+        return error_response(
+            "NOT_AUTHENTICATED",
+            "Authentication required. Send an 'authenticate' message first.",
+            MessageType.ERROR,
+            ctx.message.request_id,
+        )
+    return None
+
+
 def snapshot_to_pydantic(snapshot: RoomSnapshotData) -> RoomSnapshot:
     """Convert a dataclass RoomSnapshotData to a Pydantic RoomSnapshot."""
     return RoomSnapshot(

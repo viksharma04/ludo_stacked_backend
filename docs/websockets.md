@@ -38,6 +38,7 @@ The WebSocket system provides:
 | Message Schemas | `app/schemas/ws.py` | Pydantic models for messages |
 | Handler Registry | `app/services/websocket/handlers/__init__.py` | Handler registration and dispatch |
 | Handler Base | `app/services/websocket/handlers/base.py` | HandlerContext, HandlerResult, helpers |
+| Authenticate Handler | `app/services/websocket/handlers/authenticate.py` | AUTHENTICATE handler |
 | Ping Handler | `app/services/websocket/handlers/ping.py` | PING/PONG keepalive |
 | Ready Handler | `app/services/websocket/handlers/ready.py` | TOGGLE_READY handler |
 | Leave Handler | `app/services/websocket/handlers/leave.py` | LEAVE_ROOM handler |
@@ -45,17 +46,26 @@ The WebSocket system provides:
 
 ## Connection Flow
 
+The WebSocket connection uses a secure message-based authentication flow. The JWT token is sent after the connection is established, avoiding exposure in URLs, browser history, or server logs.
+
 ```
-1. Client connects: ws://host/api/v1/ws?token=<JWT>&room_code=ABC123
-2. Server validates JWT against Supabase JWKS (before accepting)
-3. If invalid → close with code 4001 (AUTH_FAILED) or 4002 (AUTH_EXPIRED)
-4. Server validates room access (room exists, user has seat)
-5. If room invalid → close with code 4003 (ROOM_NOT_FOUND) or 4004 (ROOM_ACCESS_DENIED)
-6. If valid → update seat connected=true, accept connection
-7. Server sends: {"type": "connected", "payload": {connection_id, user_id, server_id, room}}
-8. Server broadcasts: {"type": "room_updated", ...} to other room members
-9. Client sends periodic ping, server responds with pong
-10. On disconnect → update seat connected=false, reset ready state, broadcast room_updated
+1. Client connects: ws://host/api/v1/ws (no query params needed)
+2. Server accepts connection immediately (unauthenticated state)
+3. Server starts 30-second auth timeout
+4. Client sends: {"type": "authenticate", "payload": {"token": "<JWT>", "room_code": "ABC123"}}
+5. Server validates JWT against Supabase JWKS
+6. If invalid → sends error response (AUTH_FAILED or AUTH_EXPIRED)
+7. Server validates room access (room exists, user has seat)
+8. If room invalid → sends error response (ROOM_NOT_FOUND or ROOM_ACCESS_DENIED)
+9. If valid → update seat connected=true, mark connection authenticated
+10. Server sends: {"type": "authenticated", "payload": {connection_id, user_id, server_id, room}}
+11. Server broadcasts: {"type": "room_updated", ...} to other room members
+12. Client can now send game messages (ping, toggle_ready, leave_room)
+13. Client sends periodic ping, server responds with pong
+14. On disconnect → update seat connected=false, reset ready state, broadcast room_updated
+
+Note: If client doesn't send authenticate message within 30 seconds, connection is closed
+with code 4005 (AUTH_TIMEOUT).
 ```
 
 ## Message Protocol
@@ -63,6 +73,17 @@ The WebSocket system provides:
 **Note:** All messages use a consistent structure with `type`, optional `request_id`, and optional `payload` fields. The `request_id` should be a UUID and is echoed back in responses for request correlation.
 
 ### Client → Server
+
+**Authenticate (required first message after connection)**
+```json
+{
+  "type": "authenticate",
+  "payload": {
+    "token": "eyJhbGciOiJIUzI1NiIs...",
+    "room_code": "ABC123"
+  }
+}
+```
 
 **Ping (keepalive)**
 ```json
@@ -90,10 +111,10 @@ The WebSocket system provides:
 
 ### Server → Client
 
-**Connected (on successful connection)**
+**Authenticated (on successful authentication)**
 ```json
 {
-  "type": "connected",
+  "type": "authenticated",
   "payload": {
     "connection_id": "550e8400-e29b-41d4-a716-446655440000",
     "user_id": "user-uuid",
@@ -117,6 +138,19 @@ The WebSocket system provides:
       ],
       "version": 1
     }
+  }
+}
+```
+
+**Connected (legacy, for pre-authenticated connections)**
+```json
+{
+  "type": "connected",
+  "payload": {
+    "connection_id": "550e8400-e29b-41d4-a716-446655440000",
+    "user_id": "user-uuid",
+    "server_id": "server-1",
+    "room": { ... }
   }
 }
 ```
@@ -177,11 +211,13 @@ The WebSocket system provides:
 
 | Type | Direction | Description |
 |------|-----------|-------------|
-| `ping` | Client → Server | Keepalive request |
+| `authenticate` | Client → Server | Authenticate connection with JWT and room code |
+| `authenticated` | Server → Client | Authentication succeeded with room snapshot |
+| `ping` | Client → Server | Keepalive request (allowed before auth) |
 | `pong` | Server → Client | Keepalive response |
-| `connected` | Server → Client | Connection acknowledgment with room snapshot |
-| `toggle_ready` | Client → Server | Toggle user's ready state |
-| `leave_room` | Client → Server | Leave the current room |
+| `connected` | Server → Client | Connection acknowledgment (legacy flow) |
+| `toggle_ready` | Client → Server | Toggle user's ready state (requires auth) |
+| `leave_room` | Client → Server | Leave the current room (requires auth) |
 | `room_updated` | Server → Client | Room state changed (broadcast) |
 | `room_closed` | Server → Client | Room was closed by host |
 | `error` | Server → Client | Error notification |
@@ -221,6 +257,7 @@ Each seat in a room has the following fields:
 | 4002 | AUTH_EXPIRED | JWT has expired |
 | 4003 | ROOM_NOT_FOUND | Room code doesn't exist or room is closed |
 | 4004 | ROOM_ACCESS_DENIED | User doesn't have a seat in the room |
+| 4005 | AUTH_TIMEOUT | Client didn't send authenticate message within 30 seconds |
 
 ## Redis State
 
@@ -257,25 +294,44 @@ WS_CONNECTION_TIMEOUT=60    # Max seconds without heartbeat before disconnect
 ```javascript
 const token = await supabase.auth.getSession().data.session.access_token;
 const roomCode = 'ABC123';
-const ws = new WebSocket(`ws://localhost:8000/api/v1/ws?token=${token}&room_code=${roomCode}`);
+
+// Connect without credentials in URL (more secure)
+const ws = new WebSocket('ws://localhost:8000/api/v1/ws');
 
 ws.onopen = () => {
-  console.log('Connected');
+  console.log('Connected, sending authentication...');
+
+  // Send authentication message with token and room code
+  ws.send(JSON.stringify({
+    type: 'authenticate',
+    payload: {
+      token: token,
+      room_code: roomCode
+    }
+  }));
 };
 
 ws.onmessage = (event) => {
   const message = JSON.parse(event.data);
   console.log('Received:', message);
 
-  if (message.type === 'connected') {
+  if (message.type === 'authenticated') {
     // Store room state
     const room = message.payload.room;
-    console.log('Room:', room.code, 'Status:', room.status);
+    console.log('Authenticated! Room:', room.code, 'Status:', room.status);
 
     // Start heartbeat
     setInterval(() => {
       ws.send(JSON.stringify({ type: 'ping' }));
     }, 25000);
+  }
+
+  if (message.type === 'error') {
+    console.error('Error:', message.payload.error_code, message.payload.message);
+    // Handle auth errors
+    if (['AUTH_FAILED', 'AUTH_EXPIRED', 'ROOM_NOT_FOUND', 'ROOM_ACCESS_DENIED'].includes(message.payload.error_code)) {
+      ws.close();
+    }
   }
 
   if (message.type === 'room_updated') {
@@ -317,8 +373,12 @@ ws.onclose = (event) => {
 # Install wscat
 npm install -g wscat
 
-# Connect with token and room code
-wscat -c "ws://localhost:8000/api/v1/ws?token=YOUR_JWT_TOKEN&room_code=ABC123"
+# Connect (no credentials needed in URL)
+wscat -c "ws://localhost:8000/api/v1/ws"
+
+# Authenticate with token and room code
+> {"type": "authenticate", "payload": {"token": "YOUR_JWT_TOKEN", "room_code": "ABC123"}}
+< {"type": "authenticated", "payload": {...}}
 
 # Send ping
 > {"type": "ping"}
@@ -400,10 +460,16 @@ The `base.py` module provides helper functions for handlers:
 ```python
 from app.services.websocket.handlers.base import (
     error_response,
+    require_authenticated,
     validate_request_id,
     validate_payload,
     snapshot_to_pydantic,
 )
+
+# Require authentication (use at start of handlers that need auth)
+auth_error = require_authenticated(ctx)
+if auth_error:
+    return auth_error
 
 # Create an error response
 result = error_response(
@@ -486,11 +552,17 @@ from app.services.websocket.handlers.base import (
     HandlerContext,
     HandlerResult,
     error_response,
+    require_authenticated,
     snapshot_to_pydantic,
 )
 
 @handler(MessageType.START_GAME)
 async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
+    # Require authentication (all game handlers should check this)
+    auth_error = require_authenticated(ctx)
+    if auth_error:
+        return auth_error
+
     # Get room from connection
     connection = ctx.manager.get_connection(ctx.connection_id)
     if not connection or not connection.room_id:
@@ -519,5 +591,5 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
     )
 
 # In app/services/websocket/handlers/__init__.py
-from . import leave, ping, ready, start_game  # Add new import
+from . import authenticate, leave, ping, ready, start_game  # Add new import
 ```

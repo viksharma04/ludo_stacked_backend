@@ -12,6 +12,7 @@ from upstash_redis.asyncio import Redis
 from app.config import get_settings
 from app.dependencies.redis import get_redis_client
 from app.schemas.ws import (
+    AuthenticatedPayload,
     ConnectedPayload,
     MessageType,
     RoomSnapshot,
@@ -27,11 +28,17 @@ SEND_TIMEOUT = 10.0
 
 @dataclass
 class Connection:
-    """Represents an active WebSocket connection."""
+    """Represents an active WebSocket connection.
+
+    Connections start unauthenticated. After client sends 'authenticate' message
+    with valid token and room_code, the connection becomes authenticated and
+    user_id/room_id are populated.
+    """
 
     connection_id: str
     websocket: WebSocket
-    user_id: str
+    user_id: str | None = None
+    authenticated: bool = False
     connected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_heartbeat: datetime = field(default_factory=lambda: datetime.now(UTC))
     room_id: str | None = None
@@ -70,10 +77,116 @@ class ConnectionManager:
     def _redis_user_conn_count_key(self, user_id: str) -> str:
         return f"ws:user:{user_id}:conn_count"
 
+    def register_unauthenticated(self, websocket: WebSocket) -> Connection:
+        """Register a new unauthenticated WebSocket connection.
+
+        The connection starts in an unauthenticated state. Client must send
+        an 'authenticate' message with valid credentials to complete auth.
+
+        Args:
+            websocket: The WebSocket instance.
+
+        Returns:
+            The created Connection object (unauthenticated).
+        """
+        connection_id = str(uuid.uuid4())
+        now = datetime.now(UTC)
+
+        connection = Connection(
+            connection_id=connection_id,
+            websocket=websocket,
+            user_id=None,
+            authenticated=False,
+            connected_at=now,
+            last_heartbeat=now,
+            room_id=None,
+        )
+
+        # Local storage (not yet in user_connections since no user_id)
+        self._connections[connection_id] = connection
+
+        logger.info(
+            "Unauthenticated connection %s registered on server %s",
+            connection_id,
+            self._server_id,
+        )
+
+        return connection
+
+    async def authenticate_connection(
+        self, connection_id: str, user_id: str, room_id: str, room_snapshot: RoomSnapshot
+    ) -> bool:
+        """Authenticate a connection and subscribe it to a room.
+
+        Args:
+            connection_id: The connection to authenticate.
+            user_id: The authenticated user's ID.
+            room_id: The room to subscribe the connection to.
+            room_snapshot: The current room state to include in authenticated message.
+
+        Returns:
+            True if authentication succeeded, False if connection not found.
+        """
+        connection = self._connections.get(connection_id)
+        if connection is None:
+            logger.warning("Connection %s not found for authentication", connection_id)
+            return False
+
+        # Update connection state
+        connection.user_id = user_id
+        connection.authenticated = True
+        connection.room_id = room_id
+
+        # Add to user connections tracking
+        if user_id not in self._user_connections:
+            self._user_connections[user_id] = set()
+        self._user_connections[user_id].add(connection_id)
+
+        # Subscribe to room
+        if room_id not in self._room_connections:
+            self._room_connections[room_id] = set()
+        self._room_connections[room_id].add(connection_id)
+
+        # Redis: increment user's connection count
+        try:
+            await self._redis.incr(self._redis_user_conn_count_key(user_id))
+        except Exception as e:
+            logger.error(
+                "Failed to increment connection count for user %s in Redis: %s", user_id, e
+            )
+
+        logger.info(
+            "Connection %s authenticated for user %s on server %s, subscribed to room %s",
+            connection_id,
+            user_id,
+            self._server_id,
+            room_id,
+        )
+
+        # Send authenticated acknowledgment with room snapshot
+        await self.send_to_connection(
+            connection_id,
+            WSServerMessage(
+                type=MessageType.AUTHENTICATED,
+                payload=AuthenticatedPayload(
+                    connection_id=connection_id,
+                    user_id=user_id,
+                    server_id=self._server_id,
+                    room=room_snapshot,
+                ).model_dump(),
+            ),
+        )
+
+        return True
+
     async def connect(
         self, websocket: WebSocket, user_id: str, room_id: str, room_snapshot: RoomSnapshot
     ) -> Connection:
         """Register a new WebSocket connection and subscribe to room.
+
+        Note: This method is for pre-authenticated connections (legacy flow).
+        For the new message-based auth flow, use register_unauthenticated()
+        followed by authenticate_connection().
 
         Args:
             websocket: The WebSocket instance.
@@ -91,6 +204,7 @@ class ConnectionManager:
             connection_id=connection_id,
             websocket=websocket,
             user_id=user_id,
+            authenticated=True,
             connected_at=now,
             last_heartbeat=now,
             room_id=room_id,
@@ -154,6 +268,11 @@ class ConnectionManager:
 
         user_id = connection.user_id
         room_id = connection.room_id
+
+        # If connection was never authenticated, just log and return
+        if not connection.authenticated or user_id is None:
+            logger.info("Unauthenticated connection %s disconnected", connection_id)
+            return
 
         # Reset ready state and broadcast if user was in a room
         if room_id:

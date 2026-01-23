@@ -56,11 +56,18 @@ FastAPI backend using Supabase for authentication and database. Python 3.12+, ma
 
 ### WebSocket Architecture
 
-- **Endpoint**: `ws://host/api/v1/ws?token=<jwt>` - validates JWT before accepting connection
+- **Endpoint**: `ws://host/api/v1/ws` - accepts connection immediately, requires authentication message
+- **Authentication**: Secure message-based auth (token not exposed in URL):
+  1. Client connects to `ws://host/api/v1/ws`
+  2. Client sends: `{"type": "authenticate", "payload": {"token": "<jwt>", "room_code": "ABC123"}}`
+  3. Server validates and responds with `authenticated` or `error`
+  4. 30-second timeout for authentication
 - **Connection Manager** (`app/services/websocket/manager.py`): Tracks connections locally and in Redis for distributed state, manages room subscriptions
+- **Handler Pattern** (`app/services/websocket/handlers/`): Decorator-based handler registration, use `require_authenticated()` for auth-required handlers
 - **Message Protocol**: JSON messages with `type` field:
+  - Auth: `authenticate`, `authenticated`
   - Core: `ping`, `pong`, `connected`, `error`
-  - Room: `create_room`, `create_room_ok`, `create_room_error`
+  - Room: `toggle_ready`, `leave_room`, `room_updated`, `room_closed`
 - **Redis Keys**:
   - `ws:user:{user_id}:conn_count` - atomic counter for presence tracking
   - `room:{room_id}:meta` - room metadata hash
