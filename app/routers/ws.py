@@ -1,25 +1,21 @@
+import asyncio
 import json
 import logging
 import time
 from collections import defaultdict
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from starlette.websockets import WebSocketState
 
 from app.schemas.ws import (
     ErrorPayload,
     MessageType,
-    RoomSnapshot,
-    SeatSnapshot,
     WSClientMessage,
     WSCloseCode,
     WSServerMessage,
 )
-from app.services.room.service import RoomSnapshotData, get_room_service
-from app.services.websocket.auth import get_ws_authenticator
 from app.services.websocket.handlers import HandlerContext, dispatch
-from app.services.websocket.handlers.base import snapshot_to_pydantic
 from app.services.websocket.manager import get_connection_manager
 
 logger = logging.getLogger(__name__)
@@ -30,6 +26,9 @@ router = APIRouter(tags=["websocket"])
 MAX_MESSAGE_SIZE = 64 * 1024  # 64 KB
 MAX_MESSAGES_PER_SECOND = 10
 RATE_LIMIT_WINDOW = 1.0  # seconds
+
+# Authentication timeout (seconds to send authenticate message after connecting)
+AUTH_TIMEOUT = 30.0
 
 
 class RateLimiter:
@@ -68,80 +67,44 @@ _rate_limiter = RateLimiter()
 
 
 @router.websocket("/ws")
-async def websocket_endpoint(
-    websocket: WebSocket,
-    token: str = Query(..., description="JWT authentication token"),
-    room_code: str = Query(..., min_length=6, max_length=6, description="Room code to connect to"),
-):
+async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time room connections.
 
-    Clients connect with: ws://host/api/v1/ws?token=<jwt>&room_code=ABC123
+    Clients connect with: ws://host/api/v1/ws
 
-    Authentication and room access are validated before the connection is accepted.
-    User must have a seat in the room to connect.
-    On successful connection, server sends a 'connected' message with room snapshot.
+    After connection is accepted, clients must send an 'authenticate' message
+    within 30 seconds containing their JWT token and room_code:
+
+        { "type": "authenticate", "payload": { "token": "...", "room_code": "ABC123" } }
+
+    On successful authentication, server sends an 'authenticated' message with
+    the room snapshot. Other messages are rejected until authentication completes.
     """
-    # Validate token BEFORE accepting connection (async to avoid blocking)
-    authenticator = get_ws_authenticator()
-    auth_result = await authenticator.validate_token(token)
-
-    if not auth_result.success:
-        logger.warning("WS connection rejected: %s", auth_result.error)
-        close_code = WSCloseCode.AUTH_EXPIRED if auth_result.expired else WSCloseCode.AUTH_FAILED
-        await websocket.close(code=close_code)
-        return
-
-    user_id = auth_result.payload.get("sub") if auth_result.payload else None
-    if not user_id:
-        logger.warning("WS connection rejected: missing user_id in token")
-        await websocket.close(code=WSCloseCode.AUTH_FAILED)
-        return
-
-    # Validate room access (async to avoid blocking)
-    room_service = get_room_service()
-    room_id, error = await room_service.validate_room_access(user_id, room_code)
-    if error:
-        logger.warning(
-            "WS connection rejected for user %s: %s (room_code=%s)",
-            user_id,
-            error,
-            room_code,
-        )
-        close_code = (
-            WSCloseCode.ROOM_NOT_FOUND
-            if error == "ROOM_NOT_FOUND"
-            else WSCloseCode.ROOM_ACCESS_DENIED
-        )
-        await websocket.close(code=close_code)
-        return
-
-    # Accept the connection first
+    # Accept the connection immediately (unauthenticated)
     await websocket.accept()
-    logger.info("WS connection accepted for user %s in room %s", user_id, room_code)
 
-    # Update seat connected status and get fresh snapshot after successful accept
-    await room_service.update_seat_connected_by_user(room_id, user_id, connected=True)
-    room_snapshot_data = await room_service.get_room_snapshot(room_id)
-    if not room_snapshot_data:
-        logger.error("Room %s not found in Redis after connection accepted", room_id)
-        await websocket.close(code=WSCloseCode.ROOM_NOT_FOUND)
-        return
-
-    room_snapshot = snapshot_to_pydantic(room_snapshot_data)
-
-    # Register with connection manager (sends "connected" message to user)
+    # Register unauthenticated connection
     manager = get_connection_manager()
-    connection = await manager.connect(websocket, user_id, room_id, room_snapshot)
+    connection = manager.register_unauthenticated(websocket)
+    logger.info("WS connection accepted (unauthenticated): %s", connection.connection_id)
 
-    # Broadcast room_updated to other room members
-    await manager.send_to_room(
-        room_id,
-        WSServerMessage(
-            type=MessageType.ROOM_UPDATED,
-            payload=room_snapshot.model_dump(),
-        ),
-        exclude_connection=connection.connection_id,
-    )
+    # Start authentication timeout task
+    auth_timeout_task: asyncio.Task | None = None
+
+    async def auth_timeout():
+        """Close connection if not authenticated within timeout."""
+        await asyncio.sleep(AUTH_TIMEOUT)
+        if not connection.authenticated:
+            logger.warning(
+                "Connection %s timed out waiting for authentication",
+                connection.connection_id,
+            )
+            try:
+                await websocket.close(code=WSCloseCode.AUTH_TIMEOUT)
+            except Exception:
+                pass
+
+    auth_timeout_task = asyncio.create_task(auth_timeout())
 
     try:
         while True:
@@ -255,14 +218,20 @@ async def websocket_endpoint(
                 continue
 
             # Dispatch message to handler
+            # Note: user_id may be None for unauthenticated connections
+            # The authenticate handler will set it, other handlers check for auth
             ctx = HandlerContext(
                 connection_id=connection.connection_id,
-                user_id=user_id,
+                user_id=connection.user_id or "",
                 message=message,
                 manager=manager,
             )
 
             result = await dispatch(ctx)
+
+            # Cancel auth timeout once authenticated
+            if connection.authenticated and auth_timeout_task and not auth_timeout_task.done():
+                auth_timeout_task.cancel()
 
             if result is None:
                 logger.debug(
@@ -300,6 +269,10 @@ async def websocket_endpoint(
             e,
         )
     finally:
+        # Cancel auth timeout if still running
+        if auth_timeout_task and not auth_timeout_task.done():
+            auth_timeout_task.cancel()
+
         # Clean up rate limiter for this connection
         _rate_limiter.remove(connection.connection_id)
 

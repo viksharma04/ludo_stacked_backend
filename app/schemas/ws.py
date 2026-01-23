@@ -10,6 +10,11 @@ from pydantic import BaseModel, Field
 class MessageType(str, Enum):
     """WebSocket message types."""
 
+    # Authentication
+    AUTHENTICATE = "authenticate"
+    AUTHENTICATED = "authenticated"
+
+    # Core
     PING = "ping"
     PONG = "pong"
     CONNECTED = "connected"
@@ -38,6 +43,7 @@ class WSCloseCode:
     AUTH_EXPIRED = 4002
     ROOM_NOT_FOUND = 4003
     ROOM_ACCESS_DENIED = 4004
+    AUTH_TIMEOUT = 4005
 
 
 class WSClientMessage(BaseModel):
@@ -119,3 +125,19 @@ class JoinRoomPayload(BaseModel):
     """Payload for the 'join_room' message from client."""
 
     room_code: str = Field(..., min_length=6, max_length=6, pattern="^[A-Z0-9]{6}$")
+
+
+class AuthenticatePayload(BaseModel):
+    """Payload for the 'authenticate' message from client."""
+
+    token: str = Field(..., min_length=1)
+    room_code: str = Field(..., min_length=6, max_length=6, pattern="^[A-Z0-9]{6}$")
+
+
+class AuthenticatedPayload(BaseModel):
+    """Payload for the 'authenticated' message sent to client on successful auth."""
+
+    connection_id: str
+    user_id: str
+    server_id: str
+    room: RoomSnapshot

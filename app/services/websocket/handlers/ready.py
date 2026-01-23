@@ -6,7 +6,13 @@ from app.schemas.ws import MessageType, WSServerMessage
 from app.services.room.service import get_room_service
 
 from . import handler
-from .base import HandlerContext, HandlerResult, error_response, snapshot_to_pydantic
+from .base import (
+    HandlerContext,
+    HandlerResult,
+    error_response,
+    require_authenticated,
+    snapshot_to_pydantic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +23,11 @@ async def handle_toggle_ready(ctx: HandlerContext) -> HandlerResult:
 
     Returns room snapshot to requester and broadcasts to all room members.
     """
+    # Require authentication
+    auth_error = require_authenticated(ctx)
+    if auth_error:
+        return auth_error
+
     # Get connection to find room_id
     connection = ctx.manager.get_connection(ctx.connection_id)
     if connection is None or connection.room_id is None:
