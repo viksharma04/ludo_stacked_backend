@@ -24,6 +24,12 @@ class MessageType(str, Enum):
     LEAVE_ROOM = "leave_room"
     ROOM_CLOSED = "room_closed"
 
+    # Game
+    GAME_ACTION = "game_action"
+    GAME_EVENTS = "game_events"
+    GAME_STATE = "game_state"
+    GAME_ERROR = "game_error"
+
 
 class WSCloseCode:
     """WebSocket close codes (RFC 6455 + custom)."""
@@ -141,3 +147,50 @@ class AuthenticatedPayload(BaseModel):
     user_id: str
     server_id: str
     room: RoomSnapshot
+
+
+# --- Game payload schemas ---
+
+
+class GameActionPayload(BaseModel):
+    """Payload for GAME_ACTION messages from client.
+
+    Contains the action type and action-specific data.
+    """
+
+    action_type: str = Field(
+        ..., description="Action type: 'roll', 'move', 'capture_choice', 'start_game'"
+    )
+    value: int | None = Field(None, ge=1, le=6, description="Dice value for roll action")
+    token_or_stack_id: str | None = Field(
+        None, description="Token/stack ID for move action"
+    )
+    choice: str | None = Field(None, description="Choice for capture_choice action")
+
+
+class GameEventsPayload(BaseModel):
+    """Payload for GAME_EVENTS messages to clients.
+
+    Contains a list of events that occurred during action processing.
+    Events are broadcast to all room members for animation/UI updates.
+    """
+
+    events: list[dict[str, Any]] = Field(
+        ..., description="List of game events (serialized)"
+    )
+
+
+class GameStatePayload(BaseModel):
+    """Payload for GAME_STATE messages to clients.
+
+    Contains the full game state for reconciliation or initial sync.
+    """
+
+    state: dict[str, Any] = Field(..., description="Full game state (serialized)")
+
+
+class GameErrorPayload(BaseModel):
+    """Payload for GAME_ERROR messages to clients."""
+
+    error_code: str
+    message: str
