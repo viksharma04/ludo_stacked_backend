@@ -1,6 +1,10 @@
 """Legal move calculation for tokens and stacks."""
 
+import logging
+
 from app.schemas.game_engine import BoardSetup, Player, TokenState
+
+logger = logging.getLogger(__name__)
 
 
 def get_legal_moves(player: Player, roll: int, board_setup: BoardSetup) -> list[str]:
@@ -19,6 +23,11 @@ def get_legal_moves(player: Player, roll: int, board_setup: BoardSetup) -> list[
     Returns:
         List of token_ids and stack_ids that can be legally moved.
     """
+    logger.debug(
+        "Calculating legal moves: player=%s, roll=%d",
+        str(player.player_id)[:8],
+        roll,
+    )
     legal_moves: list[str] = []
 
     # Check individual tokens
@@ -28,10 +37,20 @@ def get_legal_moves(player: Player, roll: int, board_setup: BoardSetup) -> list[
             continue
 
         if token.state == TokenState.HELL and roll in board_setup.get_out_rolls:
+            logger.debug(
+                "Legal move (token from hell): token=%s",
+                token.token_id,
+            )
             legal_moves.append(token.token_id)
 
         elif token.state in (TokenState.ROAD, TokenState.HOMESTRETCH):
             if token.progress + roll <= board_setup.squares_to_win:
+                logger.debug(
+                    "Legal move (token on road): token=%s, progress=%d, new_progress=%d",
+                    token.token_id,
+                    token.progress,
+                    token.progress + roll,
+                )
                 legal_moves.append(token.token_id)
 
         # TokenState.HEAVEN - no legal moves (token has finished)
@@ -57,6 +76,12 @@ def get_legal_moves(player: Player, roll: int, board_setup: BoardSetup) -> list[
             if roll % stack_height == 0:
                 effective_roll = roll // stack_height
                 if first_token.progress + effective_roll <= board_setup.squares_to_win:
+                    logger.debug(
+                        "Legal move (full stack): stack=%s, height=%d, effective_roll=%d",
+                        stack.stack_id,
+                        stack_height,
+                        effective_roll,
+                    )
                     legal_moves.append(stack.stack_id)
 
             # Check partial stack movements (1 to N-1 tokens)
@@ -66,8 +91,21 @@ def get_legal_moves(player: Player, roll: int, board_setup: BoardSetup) -> list[
                 if roll % partial_count == 0:
                     effective_roll = roll // partial_count
                     if first_token.progress + effective_roll <= board_setup.squares_to_win:
+                        logger.debug(
+                            "Legal move (partial stack): stack=%s, count=%d, effective_roll=%d",
+                            stack.stack_id,
+                            partial_count,
+                            effective_roll,
+                        )
                         legal_moves.append(f"{stack.stack_id}:{partial_count}")
 
+    logger.debug(
+        "Legal moves calculated: player=%s, roll=%d, count=%d, moves=%s",
+        str(player.player_id)[:8],
+        roll,
+        len(legal_moves),
+        legal_moves,
+    )
     return legal_moves
 
 
@@ -76,6 +114,11 @@ def has_any_legal_moves(player: Player, roll: int, board_setup: BoardSetup) -> b
 
     More efficient than get_legal_moves() when you only need to know if moves exist.
     """
+    logger.debug(
+        "Checking for any legal moves: player=%s, roll=%d",
+        str(player.player_id)[:8],
+        roll,
+    )
     # Check individual tokens
     for token in player.tokens:
         if token.in_stack:

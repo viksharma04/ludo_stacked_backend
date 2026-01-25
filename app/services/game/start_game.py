@@ -1,4 +1,3 @@
-import random
 from uuid import UUID
 
 from app.schemas.game_engine import (
@@ -43,15 +42,17 @@ def _create_board_setup(game_settings: GameSettings) -> BoardSetup:
     grid_length = game_settings.grid_length
     num_players = game_settings.num_players
 
-    starting_positions = [i * 2 * grid_length for i in range(num_players)]
+    starting_positions = [0] + [sum(2 * grid_length + 1 for _ in range(i + 1)) for i in range(3)]
     safe_spaces = []
     for pos in starting_positions:
         safe_spaces.append(pos)
-        safe_spaces.append(pos + 3)
+        safe_spaces.append(pos + (2 * grid_length - 2))
+
+    starting_positions = starting_positions[:num_players]
 
     return BoardSetup(
         squares_to_win=(9 * grid_length) + 1,
-        squares_to_homestretch=8 * grid_length,
+        squares_to_homestretch=8 * grid_length + 1,
         starting_positions=starting_positions,
         get_out_rolls=game_settings.get_out_rolls,
         safe_spaces=safe_spaces,
@@ -74,7 +75,7 @@ def _create_initial_tokens(player_id: UUID) -> list[Token]:
 def _initialize_players(game_settings: GameSettings, starting_positions: list[int]) -> list[Player]:
     """Initialize players with randomized turn order."""
     shuffled_attributes = list(game_settings.player_attributes)
-    random.shuffle(shuffled_attributes)
+    # random.shuffle(shuffled_attributes)
 
     players = []
     for index, player_attr in enumerate(shuffled_attributes):

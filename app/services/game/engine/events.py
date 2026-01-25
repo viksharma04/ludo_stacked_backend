@@ -154,6 +154,20 @@ class TurnStarted(GameEvent):
     turn_number: int
 
 
+class RollGranted(GameEvent):
+    """Player should roll the dice.
+
+    Emitted whenever the game expects a player to roll:
+    - At the start of their turn
+    - After rolling a 6 (extra roll)
+    - After capturing opponent tokens (bonus roll)
+    """
+
+    event_type: Literal["roll_granted"] = "roll_granted"
+    player_id: UUID
+    reason: Literal["turn_start", "rolled_six", "capture_bonus"]
+
+
 class TurnEnded(GameEvent):
     """A player's turn has ended."""
 
@@ -211,6 +225,7 @@ AnyGameEvent = Annotated[
     | StackSplit
     | StackMoved
     | TurnStarted
+    | RollGranted
     | TurnEnded
     | AwaitingChoice
     | AwaitingCaptureChoice

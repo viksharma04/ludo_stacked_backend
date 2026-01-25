@@ -1,6 +1,9 @@
 """Token and stack movement logic."""
 
+import logging
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 from app.schemas.game_engine import (
     BoardSetup,
@@ -17,6 +20,7 @@ from .captures import detect_collisions, resolve_collision
 from .events import (
     AnyGameEvent,
     AwaitingChoice,
+    RollGranted,
     StackMoved,
     StackSplit,
     TokenExitedHell,
@@ -45,9 +49,11 @@ def process_move(
     """
     current_turn = state.current_turn
     if current_turn is None:
+        logger.error("process_move called with no active turn")
         return ProcessResult.failure("NO_ACTIVE_TURN", "No active turn")
 
     if not current_turn.rolls_to_allocate:
+        logger.error("process_move called with no rolls to allocate")
         return ProcessResult.failure("NO_ROLLS", "No rolls to allocate")
 
     # Get the first roll to allocate
@@ -58,16 +64,32 @@ def process_move(
         p for p in state.players if p.player_id == current_turn.player_id
     )
 
+    logger.info(
+        "Processing move: player=%s, piece=%s, roll=%d",
+        str(player_id)[:8],
+        token_or_stack_id,
+        roll,
+    )
+
     # Check for partial stack format: "stack_id:count"
     if ":" in token_or_stack_id:
         stack_id, count_str = token_or_stack_id.rsplit(":", 1)
         try:
             count = int(count_str)
         except ValueError:
+            logger.warning(
+                "Invalid partial stack format: %s",
+                token_or_stack_id,
+            )
             return ProcessResult.failure(
                 "INVALID_PARTIAL_STACK_FORMAT",
                 f"Invalid partial stack format: {token_or_stack_id}",
             )
+        logger.debug(
+            "Partial stack move detected: stack=%s, count=%d",
+            stack_id,
+            count,
+        )
         result = apply_partial_stack_move(
             state=state,
             stack_id=stack_id,
@@ -80,6 +102,11 @@ def process_move(
         # Determine if this is a token or full stack move
         is_stack = current_player.stacks and any(
             s.stack_id == token_or_stack_id for s in current_player.stacks
+        )
+        logger.debug(
+            "Move type: %s (id=%s)",
+            "stack" if is_stack else "token",
+            token_or_stack_id,
         )
 
         if is_stack:
@@ -100,11 +127,19 @@ def process_move(
             )
 
     if not result.success:
+        logger.warning(
+            "Move failed: piece=%s, error=%s",
+            token_or_stack_id,
+            result.error_code,
+        )
         return result
 
     # Continue processing remaining rolls or end turn
     if result.state is None:
+        logger.error("State lost during move processing")
         return ProcessResult.failure("STATE_LOST", "State lost during move processing")
+
+    logger.debug("Move applied successfully, processing post-move logic")
     return process_after_move(result.state, result.events, current_turn, roll)
 
 
@@ -127,10 +162,17 @@ def process_after_move(
     """
     current_turn = state.current_turn
     if current_turn is None:
+        logger.error("Turn lost during move processing")
         return ProcessResult.failure("NO_ACTIVE_TURN", "Turn lost during move")
 
     # Remove the used roll
     remaining_rolls = original_turn.rolls_to_allocate[1:]
+    logger.debug(
+        "Post-move: used_roll=%d, remaining_rolls=%s, extra_rolls=%d",
+        used_roll,
+        remaining_rolls,
+        current_turn.extra_rolls,
+    )
 
     # Get updated player
     updated_player = next(
@@ -163,13 +205,31 @@ def process_after_move(
                     "current_turn": updated_turn,
                 }
             )
+            logger.info(
+                "More moves available: player=%s, remaining_roll=%d, legal_moves=%d",
+                str(original_turn.player_id)[:8],
+                remaining_rolls[0],
+                len(legal_moves),
+            )
             return ProcessResult.ok(new_state, events)
 
         # No legal moves for remaining rolls
+        logger.debug(
+            "No legal moves for remaining roll %d, clearing remaining_rolls",
+            remaining_rolls[0],
+        )
         remaining_rolls = []
 
     # Check for extra rolls from captures
     if current_turn.extra_rolls > 0:
+        logger.info(
+            "Granting capture bonus roll: player=%s, extra_rolls_remaining=%d",
+            str(original_turn.player_id)[:8],
+            current_turn.extra_rolls,
+        )
+        events.append(
+            RollGranted(player_id=original_turn.player_id, reason="capture_bonus")
+        )
         updated_turn = current_turn.model_copy(
             update={
                 "rolls_to_allocate": remaining_rolls,
@@ -186,6 +246,10 @@ def process_after_move(
         return ProcessResult.ok(new_state, events)
 
     # End turn - move to next player
+    logger.info(
+        "Turn ending: player=%s, reason=all_rolls_used",
+        str(original_turn.player_id)[:8],
+    )
     next_turn_order = get_next_turn_order(
         original_turn.current_turn_order, len(state.players)
     )
@@ -201,6 +265,9 @@ def process_after_move(
     events.append(
         TurnStarted(player_id=next_player.player_id, turn_number=next_turn_order)
     )
+    events.append(
+        RollGranted(player_id=next_player.player_id, reason="turn_start")
+    )
 
     new_turn = create_new_turn(turn_order=next_turn_order, players=state.players)
     new_state = state.model_copy(
@@ -208,6 +275,11 @@ def process_after_move(
             "current_event": CurrentEvent.PLAYER_ROLL,
             "current_turn": new_turn,
         }
+    )
+    logger.info(
+        "Turn ended: previous_player=%s, next_player=%s",
+        str(original_turn.player_id)[:8],
+        str(next_player.player_id)[:8],
     )
     return ProcessResult.ok(new_state, events)
 
@@ -236,9 +308,18 @@ def apply_token_move(
     # Find the token
     token = next((t for t in player.tokens if t.token_id == token_id), None)
     if token is None:
+        logger.warning("Token not found: %s", token_id)
         return ProcessResult.failure(
             "TOKEN_NOT_FOUND", f"Token {token_id} not found"
         )
+
+    logger.debug(
+        "Applying token move: token=%s, state=%s, progress=%d, roll=%d",
+        token_id,
+        token.state.value,
+        token.progress,
+        roll,
+    )
 
     # Calculate new state and progress
     old_state = token.state
@@ -249,12 +330,23 @@ def apply_token_move(
     if token.state == TokenState.HELL:
         # Move from HELL to ROAD
         if roll not in board_setup.get_out_rolls:
+            logger.warning(
+                "Invalid get-out roll: token=%s, roll=%d, valid_rolls=%s",
+                token_id,
+                roll,
+                board_setup.get_out_rolls,
+            )
             return ProcessResult.failure(
                 "INVALID_GET_OUT_ROLL",
                 f"Roll {roll} is not a valid get-out roll",
             )
         new_state = TokenState.ROAD
         new_progress = 0
+        logger.info(
+            "Token exited hell: token=%s, player=%s",
+            token_id,
+            str(player.player_id)[:8],
+        )
         events.append(
             TokenExitedHell(player_id=player.player_id, token_id=token_id, roll_used=roll)
         )
@@ -264,11 +356,21 @@ def apply_token_move(
 
         if new_progress == board_setup.squares_to_win:
             new_state = TokenState.HEAVEN
+            logger.info(
+                "Token reached heaven: token=%s, player=%s",
+                token_id,
+                str(player.player_id)[:8],
+            )
             events.append(
                 TokenReachedHeaven(player_id=player.player_id, token_id=token_id)
             )
         elif new_progress >= board_setup.squares_to_homestretch:
             new_state = TokenState.HOMESTRETCH
+            logger.debug(
+                "Token entered homestretch: token=%s, progress=%d",
+                token_id,
+                new_progress,
+            )
 
         events.append(
             TokenMoved(
@@ -302,12 +404,21 @@ def apply_token_move(
 
     # Handle collisions on ROAD (not HOMESTRETCH or HEAVEN)
     if new_state == TokenState.ROAD:
+        logger.debug("Checking for collisions at progress=%d", new_progress)
         collision_result = handle_road_collision(
             updated_state, updated_token, updated_player, board_setup, events
         )
         if collision_result is not None:
             return collision_result
 
+    logger.debug(
+        "Token move complete: token=%s, %s->%s, progress=%d->%d",
+        token_id,
+        old_state.value,
+        new_state.value,
+        old_progress,
+        new_progress,
+    )
     return ProcessResult.ok(updated_state, events)
 
 
@@ -338,23 +449,39 @@ def apply_stack_move(
     events: list[AnyGameEvent] = []
 
     if not player.stacks:
+        logger.warning("Player has no stacks: player=%s", str(player.player_id)[:8])
         return ProcessResult.failure("NO_STACKS", "Player has no stacks")
 
     # Find the stack
     stack = next((s for s in player.stacks if s.stack_id == stack_id), None)
     if stack is None:
+        logger.warning("Stack not found: %s", stack_id)
         return ProcessResult.failure(
             "STACK_NOT_FOUND", f"Stack {stack_id} not found"
         )
 
     stack_height = len(stack.tokens)
+    logger.debug(
+        "Applying stack move: stack=%s, height=%d, roll=%d, tokens=%s",
+        stack_id,
+        stack_height,
+        roll,
+        stack.tokens,
+    )
+
     if roll % stack_height != 0:
+        logger.warning(
+            "Invalid stack roll: roll=%d, height=%d (not divisible)",
+            roll,
+            stack_height,
+        )
         return ProcessResult.failure(
             "INVALID_STACK_ROLL",
             f"Roll {roll} not divisible by stack height {stack_height}",
         )
 
     effective_roll = roll // stack_height
+    logger.debug("Effective roll for stack: %d / %d = %d", roll, stack_height, effective_roll)
 
     # Get the first token to determine current position
     first_token_id = stack.tokens[0]
@@ -403,6 +530,12 @@ def apply_stack_move(
 
     # If stack reached heaven, emit events for each token
     if new_token_state == TokenState.HEAVEN:
+        logger.info(
+            "Stack reached heaven: stack=%s, tokens=%s, player=%s",
+            stack_id,
+            stack.tokens,
+            str(player.player_id)[:8],
+        )
         for token_id in stack.tokens:
             events.append(
                 TokenReachedHeaven(player_id=player.player_id, token_id=token_id)
@@ -417,12 +550,20 @@ def apply_stack_move(
 
     # Handle collisions on ROAD
     if new_token_state == TokenState.ROAD:
+        logger.debug("Checking for stack collisions at progress=%d", new_progress)
         collision_result = handle_road_collision(
             updated_state, stack, updated_player, board_setup, events
         )
         if collision_result is not None:
             return collision_result
 
+    logger.debug(
+        "Stack move complete: stack=%s, progress=%d->%d, effective_roll=%d",
+        stack_id,
+        old_progress,
+        new_progress,
+        effective_roll,
+    )
     return ProcessResult.ok(updated_state, events)
 
 
@@ -452,30 +593,55 @@ def apply_partial_stack_move(
     """
     events: list[AnyGameEvent] = []
 
+    logger.debug(
+        "Applying partial stack move: stack=%s, count=%d, roll=%d",
+        stack_id,
+        count,
+        roll,
+    )
+
     if not player.stacks:
+        logger.warning("Player has no stacks: player=%s", str(player.player_id)[:8])
         return ProcessResult.failure("NO_STACKS", "Player has no stacks")
 
     # Find the stack
     stack = next((s for s in player.stacks if s.stack_id == stack_id), None)
     if stack is None:
+        logger.warning("Stack not found: %s", stack_id)
         return ProcessResult.failure(
             "STACK_NOT_FOUND", f"Stack {stack_id} not found"
         )
 
     stack_height = len(stack.tokens)
     if count < 1 or count >= stack_height:
+        logger.warning(
+            "Invalid partial count: count=%d, stack_height=%d",
+            count,
+            stack_height,
+        )
         return ProcessResult.failure(
             "INVALID_PARTIAL_COUNT",
             f"Partial count {count} must be between 1 and {stack_height - 1}",
         )
 
     if roll % count != 0:
+        logger.warning(
+            "Invalid partial roll: roll=%d, count=%d (not divisible)",
+            roll,
+            count,
+        )
         return ProcessResult.failure(
             "INVALID_PARTIAL_ROLL",
             f"Roll {roll} not divisible by partial count {count}",
         )
 
     effective_roll = roll // count
+    logger.debug(
+        "Effective roll for partial stack: %d / %d = %d",
+        roll,
+        count,
+        effective_roll,
+    )
 
     # Get the first token to determine current position
     first_token_id = stack.tokens[0]
@@ -493,6 +659,11 @@ def apply_partial_stack_move(
 
     # Check bounds
     if new_progress > board_setup.squares_to_win:
+        logger.warning(
+            "Move exceeds board: new_progress=%d, max=%d",
+            new_progress,
+            board_setup.squares_to_win,
+        )
         return ProcessResult.failure(
             "MOVE_EXCEEDS_BOARD",
             "Move would exceed board bounds",
@@ -501,6 +672,12 @@ def apply_partial_stack_move(
     # Split tokens: first `count` tokens move, rest stay
     moving_token_ids = stack.tokens[:count]
     remaining_token_ids = stack.tokens[count:]
+    logger.info(
+        "Splitting stack: stack=%s, moving=%s, remaining=%s",
+        stack_id,
+        moving_token_ids,
+        remaining_token_ids,
+    )
 
     # Determine new state for moving tokens
     new_token_state = first_token.state
@@ -515,8 +692,9 @@ def apply_partial_stack_move(
     new_stack: Stack | None = None
 
     if moving_is_stack:
-        new_stack_id = f"{player.player_id}_stack_{len(player.stacks) + 1}"
+        new_stack_id = f"{player.player_id}_stack_{state.next_stack_id}"
         new_stack = Stack(stack_id=new_stack_id, tokens=moving_token_ids)
+        logger.debug("Created new stack for moving tokens: %s", new_stack_id)
 
     # Emit StackSplit event
     events.append(
@@ -601,6 +779,11 @@ def apply_partial_stack_move(
 
     # If tokens reached heaven, emit events
     if new_token_state == TokenState.HEAVEN:
+        logger.info(
+            "Split tokens reached heaven: tokens=%s, player=%s",
+            moving_token_ids,
+            str(player.player_id)[:8],
+        )
         for token_id in moving_token_ids:
             events.append(
                 TokenReachedHeaven(player_id=player.player_id, token_id=token_id)
@@ -613,7 +796,11 @@ def apply_partial_stack_move(
         updated_player if p.player_id == player.player_id else p
         for p in state.players
     ]
-    updated_state = state.model_copy(update={"players": updated_players})
+    # Increment next_stack_id if a new stack was created
+    state_updates: dict = {"players": updated_players}
+    if moving_is_stack:
+        state_updates["next_stack_id"] = state.next_stack_id + 1
+    updated_state = state.model_copy(update=state_updates)
 
     # Handle collisions on ROAD
     if new_token_state == TokenState.ROAD:
@@ -637,6 +824,13 @@ def apply_partial_stack_move(
         if collision_result is not None:
             return collision_result
 
+    logger.debug(
+        "Partial stack move complete: original=%s, moved=%s, progress=%d->%d",
+        stack_id,
+        moving_token_ids,
+        old_progress,
+        new_progress,
+    )
     return ProcessResult.ok(updated_state, events)
 
 
@@ -662,10 +856,28 @@ def handle_road_collision(
     collisions = detect_collisions(state, moved_piece, player, board_setup)
 
     if not collisions:
+        logger.debug("No collisions detected")
         return None
+
+    logger.info(
+        "Collisions detected: count=%d, moving_player=%s",
+        len(collisions),
+        str(player.player_id)[:8],
+    )
 
     # Process each collision
     for other_player, other_piece in collisions:
+        other_piece_id = (
+            other_piece.token_id
+            if isinstance(other_piece, Token)
+            else other_piece.stack_id
+        )
+        logger.debug(
+            "Resolving collision with: player=%s, piece=%s, same_player=%s",
+            str(other_player.player_id)[:8],
+            other_piece_id,
+            other_player.player_id == player.player_id,
+        )
         collision_result = resolve_collision(
             state, player, moved_piece, other_player, other_piece, events
         )

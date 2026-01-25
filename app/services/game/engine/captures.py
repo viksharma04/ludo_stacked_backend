@@ -1,7 +1,10 @@
 """Capture detection and resolution logic."""
 
+import logging
 from dataclasses import dataclass, field
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 from app.schemas.game_engine import (
     BoardSetup,
@@ -46,13 +49,23 @@ def get_absolute_position(
     """
     if isinstance(piece, Token):
         progress = piece.progress
+        piece_id = piece.token_id
     else:
         # For stacks, get position from first token
         first_token_id = piece.tokens[0]
         first_token = next(t for t in player.tokens if t.token_id == first_token_id)
         progress = first_token.progress
+        piece_id = piece.stack_id
 
-    return (player.abs_starting_index + progress) % board_setup.squares_to_homestretch
+    abs_pos = (player.abs_starting_index + progress) % board_setup.squares_to_homestretch
+    logger.debug(
+        "Absolute position: piece=%s, player_start=%d, progress=%d, abs_pos=%d",
+        piece_id,
+        player.abs_starting_index,
+        progress,
+        abs_pos,
+    )
+    return abs_pos
 
 
 def detect_collisions(
@@ -79,6 +92,11 @@ def detect_collisions(
 
     # Get the moved piece's ID for comparison
     moved_id = moved_piece.token_id if isinstance(moved_piece, Token) else moved_piece.stack_id
+    logger.debug(
+        "Detecting collisions: moved_piece=%s, abs_position=%d",
+        moved_id,
+        moved_position,
+    )
 
     for player in state.players:
         # Check individual tokens (not in stacks)
@@ -97,6 +115,11 @@ def detect_collisions(
 
             token_pos = get_absolute_position(token, player, board_setup)
             if token_pos == moved_position:
+                logger.debug(
+                    "Token collision found: token=%s, player=%s",
+                    token.token_id,
+                    str(player.player_id)[:8],
+                )
                 collisions.append((player, token))
 
         # Check stacks
@@ -114,8 +137,14 @@ def detect_collisions(
 
                 stack_pos = get_absolute_position(stack, player, board_setup)
                 if stack_pos == moved_position:
+                    logger.debug(
+                        "Stack collision found: stack=%s, player=%s",
+                        stack.stack_id,
+                        str(player.player_id)[:8],
+                    )
                     collisions.append((player, stack))
 
+    logger.debug("Total collisions detected: %d", len(collisions))
     return collisions
 
 
@@ -146,17 +175,37 @@ def resolve_collision(
         CollisionResult with updated state and events.
     """
     same_player = capturing_player.player_id == other_player.player_id
+    logger.debug(
+        "Resolving collision: same_player=%s, capturing_player=%s, other_player=%s",
+        same_player,
+        str(capturing_player.player_id)[:8],
+        str(other_player.player_id)[:8],
+    )
 
     if same_player:
+        logger.info(
+            "Stacking: player=%s is forming a stack",
+            str(capturing_player.player_id)[:8],
+        )
         return resolve_stacking(state, capturing_player, capturing_piece, other_piece)
     else:
         # If the current position is a safe space, no capture occurs
-        # Check if the position is a safe space
-
         moved_position = get_absolute_position(capturing_piece, capturing_player, state.board_setup)
         if moved_position in state.board_setup.safe_spaces:
-            return CollisionResult(state=state, events=events)
+            logger.info(
+                "Safe space: no capture at position %d (safe_spaces=%s)",
+                moved_position,
+                state.board_setup.safe_spaces,
+            )
+            # Return empty events list - no capture events occur on safe spaces
+            # (returning the passed-in events list would cause duplication)
+            return CollisionResult(state=state, events=[])
 
+        logger.info(
+            "Capture attempt: player=%s attacking player=%s",
+            str(capturing_player.player_id)[:8],
+            str(other_player.player_id)[:8],
+        )
         return resolve_capture(
             state, capturing_player, capturing_piece, other_player, other_piece, events
         )
@@ -194,8 +243,14 @@ def resolve_stacking(
     else:
         token_ids.extend(piece2.tokens)
 
-    # Create new stack ID
-    stack_id = f"{player.player_id}_stack_{len(player.stacks or []) + 1}"
+    # Create new stack ID using monotonically increasing counter
+    stack_id = f"{player.player_id}_stack_{state.next_stack_id}"
+    logger.info(
+        "Forming stack: stack_id=%s, tokens=%s, player=%s",
+        stack_id,
+        token_ids,
+        str(player.player_id)[:8],
+    )
 
     # Update tokens to be in_stack
     updated_tokens = []
@@ -237,8 +292,16 @@ def resolve_stacking(
     updated_players = [
         updated_player if p.player_id == player.player_id else p for p in state.players
     ]
-    updated_state = state.model_copy(update={"players": updated_players})
+    updated_state = state.model_copy(
+        update={"players": updated_players, "next_stack_id": state.next_stack_id + 1}
+    )
 
+    logger.debug(
+        "Stack formed: stack_id=%s, height=%d, position=%d",
+        stack_id,
+        len(token_ids),
+        position,
+    )
     return CollisionResult(state=updated_state, events=events)
 
 
@@ -255,7 +318,8 @@ def resolve_capture(
     Rules:
     - Moving piece equal or larger than stationary piece: Stationary piece captured (sent to HELL)
     - Moving piece smaller than stationary piece: No capture occurs (stationary piece is safe)
-    - Capturing grants an extra roll
+    - Capturing grants extra rolls based on the number of tokens captured (stack size)
+    - After capture, current_event is set to PLAYER_ROLL and extra_rolls is decremented by 1
 
     Args:
         state: Current game state.
@@ -285,6 +349,12 @@ def resolve_capture(
         captured_size = len(captured_piece.tokens)
         captured_token_ids = captured_piece.tokens
 
+    logger.debug(
+        "Capture comparison: capturing_size=%d, captured_size=%d",
+        capturing_size,
+        captured_size,
+    )
+
     # Get position for events
     if isinstance(capturing_piece, Token):
         position = capturing_piece.progress
@@ -298,6 +368,13 @@ def resolve_capture(
 
     if capturing_size >= captured_size:
         # Capturing piece wins - captured piece goes to HELL
+        logger.info(
+            "Capture successful: capturing_player=%s captured %d tokens from player=%s at position=%d",
+            str(capturing_player.player_id)[:8],
+            captured_size,
+            str(captured_player.player_id)[:8],
+            position,
+        )
         updated_state = send_to_hell(updated_state, captured_player, captured_token_ids)
 
         # Dissolve captured stack if applicable
@@ -323,12 +400,21 @@ def resolve_capture(
                 )
             )
 
-        # Grant extra roll
-        updated_state = grant_extra_roll(updated_state)
+        # Grant extra rolls based on the number of captured tokens (stack size)
+        # The process_after_move function will handle setting PLAYER_ROLL and decrementing
+        logger.info(
+            "Granting %d extra rolls for capture",
+            captured_size,
+        )
+        updated_state = grant_extra_rolls(updated_state, captured_size)
 
     elif captured_size > capturing_size:
         # Captured piece is safe - no capture occurs
-        pass
+        logger.info(
+            "Capture blocked: captured_size=%d > capturing_size=%d",
+            captured_size,
+            capturing_size,
+        )
 
     return CollisionResult(state=updated_state, events=new_events)
 
@@ -348,6 +434,11 @@ def send_to_hell(
     Returns:
         Updated game state.
     """
+    logger.info(
+        "Sending tokens to hell: tokens=%s, player=%s",
+        token_ids,
+        str(player.player_id)[:8],
+    )
     # Get fresh player from state
     current_player = next(p for p in state.players if p.player_id == player.player_id)
 
@@ -385,20 +476,29 @@ def send_to_hell(
     return state.model_copy(update={"players": updated_players})
 
 
-def grant_extra_roll(state: GameState) -> GameState:
-    """Grant an extra roll to the current player.
+def grant_extra_rolls(state: GameState, count: int = 1) -> GameState:
+    """Grant extra rolls to the current player based on capture size.
 
     Args:
         state: Current game state.
+        count: Number of extra rolls to grant (typically the captured stack size).
 
     Returns:
-        Updated game state with extra_rolls incremented.
+        Updated game state with extra_rolls incremented by count.
     """
     if state.current_turn is None:
+        logger.warning("Cannot grant extra rolls: no active turn")
         return state
 
+    new_total = state.current_turn.extra_rolls + count
+    logger.debug(
+        "Granting extra rolls: count=%d, new_total=%d, player=%s",
+        count,
+        new_total,
+        str(state.current_turn.player_id)[:8],
+    )
     updated_turn = state.current_turn.model_copy(
-        update={"extra_rolls": state.current_turn.extra_rolls + 1}
+        update={"extra_rolls": new_total}
     )
     return state.model_copy(update={"current_turn": updated_turn})
 

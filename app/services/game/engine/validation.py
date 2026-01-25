@@ -5,8 +5,11 @@ Separates validation from processing logic:
 - ProcessResult replaces exceptions for control flow
 """
 
+import logging
 from dataclasses import dataclass, field
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 from app.schemas.game_engine import CurrentEvent, GamePhase, GameState
 
@@ -103,23 +106,38 @@ def validate_action(
     Returns:
         ValidationResult indicating success or failure with error details.
     """
+    action_type = type(action).__name__
+    logger.debug(
+        "Validating action: type=%s, player=%s, phase=%s",
+        action_type,
+        str(player_id)[:8],
+        state.phase.value,
+    )
+
     # Handle start game action
     if isinstance(action, StartGameAction):
         if state.phase != GamePhase.NOT_STARTED:
+            logger.warning(
+                "Validation failed: GAME_ALREADY_STARTED, current_phase=%s",
+                state.phase.value,
+            )
             return ValidationResult.error(
                 "GAME_ALREADY_STARTED",
                 "Game has already started",
             )
+        logger.debug("StartGameAction validated successfully")
         return ValidationResult.ok()
 
     # For all other actions, game must be in progress
     if state.phase == GamePhase.NOT_STARTED:
+        logger.warning("Validation failed: GAME_NOT_STARTED")
         return ValidationResult.error(
             "GAME_NOT_STARTED",
             "Game has not started yet",
         )
 
     if state.phase == GamePhase.FINISHED:
+        logger.warning("Validation failed: GAME_FINISHED")
         return ValidationResult.error(
             "GAME_FINISHED",
             "Game has already finished",
@@ -127,12 +145,18 @@ def validate_action(
 
     # Check it's this player's turn
     if state.current_turn is None:
+        logger.warning("Validation failed: NO_ACTIVE_TURN")
         return ValidationResult.error(
             "NO_ACTIVE_TURN",
             "No active turn",
         )
 
     if state.current_turn.player_id != player_id:
+        logger.warning(
+            "Validation failed: NOT_YOUR_TURN, current=%s, attempted=%s",
+            str(state.current_turn.player_id)[:8],
+            str(player_id)[:8],
+        )
         return ValidationResult.error(
             "NOT_YOUR_TURN",
             "It's not your turn",
@@ -141,6 +165,11 @@ def validate_action(
     # Validate action type matches expected event
     if isinstance(action, RollAction):
         if state.current_event != CurrentEvent.PLAYER_ROLL:
+            logger.warning(
+                "Validation failed: INVALID_ACTION (roll), expected=%s, got=%s",
+                CurrentEvent.PLAYER_ROLL.value,
+                state.current_event.value,
+            )
             return ValidationResult.error(
                 "INVALID_ACTION",
                 "Cannot roll dice - waiting for a different action",
@@ -148,6 +177,11 @@ def validate_action(
 
     elif isinstance(action, MoveAction):
         if state.current_event != CurrentEvent.PLAYER_CHOICE:
+            logger.warning(
+                "Validation failed: INVALID_ACTION (move), expected=%s, got=%s",
+                CurrentEvent.PLAYER_CHOICE.value,
+                state.current_event.value,
+            )
             return ValidationResult.error(
                 "INVALID_ACTION",
                 "Cannot move - waiting for a different action",
@@ -155,6 +189,11 @@ def validate_action(
 
         # Check move is in legal moves
         if action.token_or_stack_id not in state.current_turn.legal_moves:
+            logger.warning(
+                "Validation failed: ILLEGAL_MOVE, requested=%s, legal_moves=%s",
+                action.token_or_stack_id,
+                state.current_turn.legal_moves,
+            )
             return ValidationResult.error(
                 "ILLEGAL_MOVE",
                 f"'{action.token_or_stack_id}' is not a legal move",
@@ -162,9 +201,15 @@ def validate_action(
 
     elif isinstance(action, CaptureChoiceAction):
         if state.current_event != CurrentEvent.CAPTURE_CHOICE:
+            logger.warning(
+                "Validation failed: INVALID_ACTION (capture_choice), expected=%s, got=%s",
+                CurrentEvent.CAPTURE_CHOICE.value,
+                state.current_event.value,
+            )
             return ValidationResult.error(
                 "INVALID_ACTION",
                 "Cannot make capture choice - not in capture resolution",
             )
 
+    logger.debug("Action validated successfully: type=%s", action_type)
     return ValidationResult.ok()

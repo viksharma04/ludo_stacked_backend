@@ -25,6 +25,8 @@ class MessageType(str, Enum):
     ROOM_CLOSED = "room_closed"
 
     # Game
+    START_GAME = "start_game"
+    GAME_STARTED = "game_started"
     GAME_ACTION = "game_action"
     GAME_EVENTS = "game_events"
     GAME_STATE = "game_state"
@@ -194,3 +196,24 @@ class GameErrorPayload(BaseModel):
 
     error_code: str
     message: str
+
+
+class StartGamePayload(BaseModel):
+    """Payload for START_GAME messages from client.
+
+    Currently empty - allows future extension for game settings.
+    """
+
+    pass
+
+
+class GameStartedPayload(BaseModel):
+    """Payload for GAME_STARTED message to host after starting the game.
+
+    Contains the initial game state and startup events.
+    """
+
+    game_state: dict[str, Any] = Field(..., description="Full game state (serialized)")
+    events: list[dict[str, Any]] = Field(
+        ..., description="List of game events (game_started, turn_started)"
+    )

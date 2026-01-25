@@ -98,6 +98,7 @@ class GameState(BaseModel):
     current_turn: Turn | None = None
     stacks: list[Stack] | None = None
     event_seq: int = 0  # Next sequence number for events (monotonically increasing)
+    next_stack_id: int = 1  # Next stack ID counter (monotonically increasing)
 
 
 # Action log for recording player actions
