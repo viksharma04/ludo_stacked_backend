@@ -42,6 +42,8 @@ The WebSocket system provides:
 | Ping Handler | `app/services/websocket/handlers/ping.py` | PING/PONG keepalive |
 | Ready Handler | `app/services/websocket/handlers/ready.py` | TOGGLE_READY handler |
 | Leave Handler | `app/services/websocket/handlers/leave.py` | LEAVE_ROOM handler |
+| Start Game Handler | `app/services/websocket/handlers/start_game.py` | START_GAME handler |
+| Game Handler | `app/services/websocket/handlers/game.py` | GAME_ACTION handler |
 | Redis Client | `app/dependencies/redis.py` | Upstash Redis singleton |
 
 ## Connection Flow
@@ -207,6 +209,65 @@ with code 4005 (AUTH_TIMEOUT).
 }
 ```
 
+### Game Messages
+
+**Start Game (host only)**
+```json
+{
+  "type": "start_game",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Game Action (roll)**
+```json
+{
+  "type": "game_action",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "action_type": "roll",
+    "value": 5
+  }
+}
+```
+
+**Game Action (move)**
+```json
+{
+  "type": "game_action",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "action_type": "move",
+    "token_or_stack_id": "player-uuid_token_1"
+  }
+}
+```
+
+**Game Events (broadcast)**
+```json
+{
+  "type": "game_events",
+  "payload": {
+    "events": [
+      { "event_type": "dice_rolled", "player_id": "uuid", "value": 5, "roll_number": 1, "grants_extra_roll": false, "seq": 2 },
+      { "event_type": "awaiting_choice", "player_id": "uuid", "legal_moves": ["token_1", "token_2"], "roll_to_allocate": 5, "seq": 3 }
+    ]
+  }
+}
+```
+
+**Game Error**
+```json
+{
+  "type": "game_error",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "error_code": "NOT_YOUR_TURN",
+    "message": "Wait for your turn"
+  }
+}
+```
+
 ## Message Types
 
 | Type | Direction | Description |
@@ -220,7 +281,13 @@ with code 4005 (AUTH_TIMEOUT).
 | `leave_room` | Client → Server | Leave the current room (requires auth) |
 | `room_updated` | Server → Client | Room state changed (broadcast) |
 | `room_closed` | Server → Client | Room was closed by host |
-| `error` | Server → Client | Error notification |
+| `start_game` | Client → Server | Host starts the game (requires auth + host) |
+| `game_started` | Server → Client | Game started with initial state (host only) |
+| `game_action` | Client → Server | Player game action (roll, move, capture_choice) |
+| `game_events` | Server → Client | Game events broadcast to room |
+| `game_state` | Server → Client | Full game state (reconnection sync) |
+| `game_error` | Server → Client | Game action error |
+| `error` | Server → Client | General error notification |
 
 ## Room State
 
@@ -284,7 +351,7 @@ UPSTASH_REDIS_REST_TOKEN=xxx
 
 # WebSocket settings (optional, shown with defaults)
 WS_HEARTBEAT_INTERVAL=30    # Cleanup check interval in seconds
-WS_CONNECTION_TIMEOUT=60    # Max seconds without heartbeat before disconnect
+WS_CONNECTION_TIMEOUT=120   # Max seconds without heartbeat before disconnect
 ```
 
 ## Usage Examples
