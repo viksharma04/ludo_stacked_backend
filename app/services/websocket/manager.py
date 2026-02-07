@@ -152,13 +152,13 @@ class ConnectionManager:
             await self._redis.incr(self._redis_user_conn_count_key(user_id))
         except Exception as e:
             logger.error(
-                "Failed to increment connection count for user %s in Redis: %s", user_id, e
+                "Failed to increment connection count for user %s in Redis: %s", user_id[:8], e
             )
 
         logger.info(
             "Connection %s authenticated for user %s on server %s, subscribed to room %s",
             connection_id,
-            user_id,
+            user_id[:8],
             self._server_id,
             room_id,
         )
@@ -226,13 +226,13 @@ class ConnectionManager:
             await self._redis.incr(self._redis_user_conn_count_key(user_id))
         except Exception as e:
             logger.error(
-                "Failed to increment connection count for user %s in Redis: %s", user_id, e
+                "Failed to increment connection count for user %s in Redis: %s", user_id[:8], e
             )
 
         logger.info(
             "Connection %s established for user %s on server %s, subscribed to room %s",
             connection_id,
-            user_id,
+            user_id[:8],
             self._server_id,
             room_id,
         )
@@ -337,10 +337,10 @@ class ConnectionManager:
                 await self._redis.delete(self._redis_user_conn_count_key(user_id))
         except Exception as e:
             logger.error(
-                "Failed to decrement connection count for user %s in Redis: %s", user_id, e
+                "Failed to decrement connection count for user %s in Redis: %s", user_id[:8], e
             )
 
-        logger.info("Connection %s disconnected for user %s", connection_id, user_id)
+        logger.info("Connection %s disconnected for user %s", connection_id, user_id[:8])
 
     async def heartbeat(self, connection_id: str) -> None:
         """Update the last heartbeat timestamp for a connection.
@@ -351,7 +351,7 @@ class ConnectionManager:
         connection = self._connections.get(connection_id)
         if connection:
             connection.last_heartbeat = datetime.now(UTC)
-            logger.debug("Heartbeat updated for connection %s", connection_id)
+            # logger.debug("Heartbeat updated for connection %s", connection_id)
 
     async def cleanup_stale_connections(self) -> None:
         """Remove connections that have exceeded the timeout period."""
@@ -367,7 +367,7 @@ class ConnectionManager:
                 logger.warning(
                     "Connection %s for user %s is stale (%.1fs since heartbeat)",
                     conn_id,
-                    connection.user_id,
+                    connection.user_id[:8] if connection.user_id else None,
                     elapsed,
                 )
 
