@@ -1181,6 +1181,50 @@ class RoomService:
 
         logger.debug("Reset all ready states in room %s", room_id)
 
+    async def update_room_status_to_in_game(self, room_id: str) -> bool:
+        """Update room status to 'in_game' in both Redis and database.
+
+        Called when the host starts the game. Updates:
+        - Redis room:meta status field
+        - Database rooms.status column
+        - Increments room version
+
+        Args:
+            room_id: The room to update.
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        try:
+            # Update Redis status
+            await self._update_room_status(room_id, "in_game")
+
+            # Update database status
+            response = await (
+                self._supabase.table("rooms")
+                .update({"status": "in_game"})
+                .eq("room_id", room_id)
+                .execute()
+            )
+
+            if not response.data or len(response.data) == 0:
+                logger.warning(
+                    "Room %s not found in DB when updating to in_game", room_id
+                )
+                return False
+
+            # Increment room version
+            await self._increment_room_version(room_id)
+
+            logger.info("Room %s status updated to 'in_game'", room_id)
+            return True
+
+        except Exception as e:
+            logger.exception(
+                "Error updating room %s status to in_game: %s", room_id, e
+            )
+            return False
+
     async def leave_room(self, room_id: str, user_id: str) -> LeaveRoomResult:
         """Handle a user leaving a room.
 

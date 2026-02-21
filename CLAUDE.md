@@ -7,6 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 uv sync                    # Install dependencies
 uv run fastapi dev         # Start development server (http://localhost:8000, auto-reload)
+uv run pytest              # Run tests
+uv run pytest -v           # Run tests with verbose output
 ```
 
 API docs available at `http://localhost:8000/docs` when running.
@@ -37,6 +39,22 @@ FastAPI backend using Supabase for authentication and database. Python 3.12+, ma
 - **`app/schemas/`** - Pydantic models for request/response validation
 - **`app/services/websocket/`** - WebSocket infrastructure (auth, connection manager with room subscriptions)
 - **`app/services/room/`** - Room service for creating and managing game rooms via Supabase RPC
+- **`app/services/game/`** - Game initialization and engine
+
+### Game Engine (`app/services/game/engine/`)
+
+The game engine handles all Ludo Stacked game mechanics:
+
+- **`actions.py`** - Player action models (RollAction, MoveAction, CaptureChoiceAction, StartGameAction)
+- **`events.py`** - Game event models broadcast via WebSocket (16 event types)
+- **`process.py`** - Main entry point `process_action()` - validates and processes actions
+- **`validation.py`** - Pre-processing validation (phase, turn, legal moves)
+- **`rolling.py`** - Dice roll processing, extra rolls, three-sixes penalty
+- **`movement.py`** - Token/stack movement, collision detection
+- **`legal_moves.py`** - Calculate valid moves after dice roll
+- **`captures.py`** - Collision resolution, capture mechanics
+
+See `docs/game_engine.md` for detailed architecture documentation.
 
 ### Authentication Flow
 
@@ -68,6 +86,7 @@ FastAPI backend using Supabase for authentication and database. Python 3.12+, ma
   - Auth: `authenticate`, `authenticated`
   - Core: `ping`, `pong`, `connected`, `error`
   - Room: `toggle_ready`, `leave_room`, `room_updated`, `room_closed`
+  - Game: `start_game`, `game_started`, `game_action`, `game_events`, `game_state`, `game_error`
 - **Redis Keys**:
   - `ws:user:{user_id}:conn_count` - atomic counter for presence tracking
   - `room:{room_id}:meta` - room metadata hash
@@ -77,7 +96,7 @@ See `docs/websockets.md` and `docs/redis.md` for detailed documentation.
 
 ### Room Operations
 
-Room creation uses a Supabase RPC stored procedure (`create_room`) for atomic operations:
+Room creation uses a Supabase RPC stored procedure (`find_or_create_room`) for atomic operations:
 - Idempotency via `ws_idempotency` table (request_id must be UUID)
 - Unique 6-character room code generation with collision retry
 - Creates room record and 4 seat records in single transaction

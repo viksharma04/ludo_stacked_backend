@@ -60,10 +60,14 @@ async def dispatch(ctx: HandlerContext) -> HandlerResult | None:
 
 
 # Import handlers to trigger registration
-from . import authenticate  # noqa: E402, F401
-from . import leave  # noqa: E402, F401
-from . import ping  # noqa: E402, F401
-from . import ready  # noqa: E402, F401
+from . import (
+    authenticate,  # noqa: E402, F401
+    game,  # noqa: E402, F401
+    leave,  # noqa: E402, F401
+    ping,  # noqa: E402, F401
+    ready,  # noqa: E402, F401
+    start_game,  # noqa: E402, F401
+)
 
 __all__ = [
     "HandlerContext",
