@@ -11,8 +11,7 @@ from app.schemas.game_engine import (
     GameState,
     Player,
     Stack,
-    Token,
-    TokenState,
+    StackState,
     Turn,
 )
 
@@ -27,10 +26,10 @@ PLAYER_4_ID = UUID("00000000-0000-0000-0000-000000000004")
 def standard_board_setup() -> BoardSetup:
     """Standard 4-player board setup."""
     return BoardSetup(
-        squares_to_win=57,  # 52 road + 5 homestretch
+        squares_to_win=57,
         squares_to_homestretch=52,
-        starting_positions=[0, 13, 26, 39],  # Every 13 squares
-        safe_spaces=[0, 13, 26, 39, 8, 21, 34, 47],  # Starting positions + extra safe
+        starting_positions=[0, 13, 26, 39],
+        safe_spaces=[0, 13, 26, 39, 8, 21, 34, 47],
         get_out_rolls=[6],
     )
 
@@ -47,21 +46,16 @@ def two_player_board_setup() -> BoardSetup:
     )
 
 
-def create_token(
-    token_id: str, state: TokenState, progress: int = 0, in_stack: bool = False
-) -> Token:
-    """Helper to create a token."""
-    return Token(
-        token_id=token_id,
-        state=state,
-        progress=progress,
-        in_stack=in_stack,
-    )
+def create_stack(
+    stack_id: str, state: StackState, height: int = 1, progress: int = 0
+) -> Stack:
+    """Helper to create a stack."""
+    return Stack(stack_id=stack_id, state=state, height=height, progress=progress)
 
 
-def create_tokens_in_hell(player_id: UUID, count: int = 4) -> list[Token]:
-    """Create tokens all in HELL state."""
-    return [create_token(f"{player_id}_token_{i}", TokenState.HELL, 0) for i in range(1, count + 1)]
+def create_stacks_in_hell(count: int = 4) -> list[Stack]:
+    """Create stacks all in HELL state (stack_1 through stack_N)."""
+    return [create_stack(f"stack_{i}", StackState.HELL, 1, 0) for i in range(1, count + 1)]
 
 
 def create_player(
@@ -70,76 +64,45 @@ def create_player(
     color: str,
     turn_order: int,
     abs_starting_index: int,
-    tokens: list[Token] | None = None,
     stacks: list[Stack] | None = None,
 ) -> Player:
     """Helper to create a player."""
-    if tokens is None:
-        tokens = create_tokens_in_hell(player_id)
+    if stacks is None:
+        stacks = create_stacks_in_hell()
     return Player(
         player_id=player_id,
         name=name,
         color=color,
         turn_order=turn_order,
         abs_starting_index=abs_starting_index,
-        tokens=tokens,
         stacks=stacks,
     )
 
 
 @pytest.fixture
 def player1(standard_board_setup: BoardSetup) -> Player:
-    """Player 1 with all tokens in HELL."""
-    return create_player(
-        player_id=PLAYER_1_ID,
-        name="Player 1",
-        color="red",
-        turn_order=1,
-        abs_starting_index=0,
-    )
+    return create_player(PLAYER_1_ID, "Player 1", "red", 1, 0)
 
 
 @pytest.fixture
 def player2(standard_board_setup: BoardSetup) -> Player:
-    """Player 2 with all tokens in HELL."""
-    return create_player(
-        player_id=PLAYER_2_ID,
-        name="Player 2",
-        color="blue",
-        turn_order=2,
-        abs_starting_index=13,
-    )
+    return create_player(PLAYER_2_ID, "Player 2", "blue", 2, 13)
 
 
 @pytest.fixture
 def player3(standard_board_setup: BoardSetup) -> Player:
-    """Player 3 with all tokens in HELL."""
-    return create_player(
-        player_id=PLAYER_3_ID,
-        name="Player 3",
-        color="green",
-        turn_order=3,
-        abs_starting_index=26,
-    )
+    return create_player(PLAYER_3_ID, "Player 3", "green", 3, 26)
 
 
 @pytest.fixture
 def player4(standard_board_setup: BoardSetup) -> Player:
-    """Player 4 with all tokens in HELL."""
-    return create_player(
-        player_id=PLAYER_4_ID,
-        name="Player 4",
-        color="yellow",
-        turn_order=4,
-        abs_starting_index=39,
-    )
+    return create_player(PLAYER_4_ID, "Player 4", "yellow", 4, 39)
 
 
 @pytest.fixture
 def two_player_game_not_started(
     player1: Player, player2: Player, two_player_board_setup: BoardSetup
 ) -> GameState:
-    """Two-player game in NOT_STARTED phase."""
     return GameState(
         phase=GamePhase.NOT_STARTED,
         players=[player1, player2],
@@ -151,13 +114,9 @@ def two_player_game_not_started(
 
 @pytest.fixture
 def four_player_game_not_started(
-    player1: Player,
-    player2: Player,
-    player3: Player,
-    player4: Player,
+    player1: Player, player2: Player, player3: Player, player4: Player,
     standard_board_setup: BoardSetup,
 ) -> GameState:
-    """Four-player game in NOT_STARTED phase."""
     return GameState(
         phase=GamePhase.NOT_STARTED,
         players=[player1, player2, player3, player4],
@@ -171,7 +130,6 @@ def four_player_game_not_started(
 def game_player1_turn(
     player1: Player, player2: Player, two_player_board_setup: BoardSetup
 ) -> GameState:
-    """Game in progress with player 1's turn to roll."""
     turn = Turn(
         player_id=PLAYER_1_ID,
         initial_roll=True,
@@ -190,31 +148,22 @@ def game_player1_turn(
 
 
 @pytest.fixture
-def game_with_token_on_road(player2: Player, two_player_board_setup: BoardSetup) -> GameState:
-    """Game where player 1 has a token on the road at position 10."""
-    # Player 1 with one token on road
-    player1_tokens = [
-        create_token(f"{PLAYER_1_ID}_token_1", TokenState.ROAD, 10),
-        create_token(f"{PLAYER_1_ID}_token_2", TokenState.HELL, 0),
-        create_token(f"{PLAYER_1_ID}_token_3", TokenState.HELL, 0),
-        create_token(f"{PLAYER_1_ID}_token_4", TokenState.HELL, 0),
-    ]
+def game_with_stack_on_road(player2: Player, two_player_board_setup: BoardSetup) -> GameState:
+    """Game where player 1 has a stack on the road at progress 10."""
     player1 = create_player(
-        player_id=PLAYER_1_ID,
-        name="Player 1",
-        color="red",
-        turn_order=1,
-        abs_starting_index=0,
-        tokens=player1_tokens,
+        player_id=PLAYER_1_ID, name="Player 1", color="red",
+        turn_order=1, abs_starting_index=0,
+        stacks=[
+            create_stack("stack_1", StackState.ROAD, 1, 10),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ],
     )
-
     turn = Turn(
-        player_id=PLAYER_1_ID,
-        initial_roll=True,
-        rolls_to_allocate=[],
-        legal_moves=[],
-        current_turn_order=1,
-        extra_rolls=0,
+        player_id=PLAYER_1_ID, initial_roll=True,
+        rolls_to_allocate=[], legal_moves=[],
+        current_turn_order=1, extra_rolls=0,
     )
     return GameState(
         phase=GamePhase.IN_PROGRESS,
