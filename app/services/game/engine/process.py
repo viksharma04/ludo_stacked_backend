@@ -103,11 +103,6 @@ def process_action(
 
     elif isinstance(action, CaptureChoiceAction):
         result = process_capture_choice(state, action.choice, player_id)
-        if result.state is None:
-            logger.error("Capture choice failed: player=%s, choice=%s", player_id, action.choice)
-            return ProcessResult.failure(
-                "CAPTURE_CHOICE_FAILED", "Failed to process capture choice"
-            )
 
     else:
         logger.error("Unknown action type received: %s", action_type)
