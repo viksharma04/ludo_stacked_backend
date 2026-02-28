@@ -1,4 +1,10 @@
-"""Token and stack movement logic."""
+"""Stack movement logic for the Stack-only model.
+
+All pieces are Stacks (height >= 1). Movement includes:
+- Full stack moves (apply_stack_move)
+- Split moves where a sub-stack peels off (apply_split_move)
+- Post-move logic: remaining rolls, extra rolls, turn transitions
+"""
 
 import logging
 from uuid import UUID
@@ -11,8 +17,7 @@ from app.schemas.game_engine import (
     GameState,
     Player,
     Stack,
-    Token,
-    TokenState,
+    StackState,
     Turn,
 )
 
@@ -21,27 +26,28 @@ from .events import (
     AnyGameEvent,
     AwaitingChoice,
     RollGranted,
+    StackExitedHell,
     StackMoved,
-    StackSplit,
-    TokenExitedHell,
-    TokenMoved,
-    TokenReachedHeaven,
+    StackReachedHeaven,
+    StackUpdate,
     TurnEnded,
     TurnStarted,
 )
 from .legal_moves import get_legal_moves
 from .rolling import create_new_turn, get_next_turn_order
+from .stack_utils import find_parent_stack, get_split_result, parse_components
 from .validation import ProcessResult
 
 
-def process_move(
-    state: GameState, token_or_stack_id: str, player_id: UUID
-) -> ProcessResult:
+def process_move(state: GameState, stack_id: str, player_id: UUID) -> ProcessResult:
     """Process a player's move selection.
+
+    Determines whether this is a full stack move or a split move,
+    dispatches accordingly, and runs post-move logic on success.
 
     Args:
         state: Current game state.
-        token_or_stack_id: ID of token or stack to move (may be "stack_id:count" for partial).
+        stack_id: ID of stack (or sub-stack) to move.
         player_id: The player making the move.
 
     Returns:
@@ -60,76 +66,53 @@ def process_move(
     roll = current_turn.rolls_to_allocate[0]
 
     # Find the current player
-    current_player = next(
-        p for p in state.players if p.player_id == current_turn.player_id
-    )
+    current_player = next(p for p in state.players if p.player_id == current_turn.player_id)
 
     logger.info(
-        "Processing move: player=%s, piece=%s, roll=%d",
+        "Processing move: player=%s, stack=%s, roll=%d",
         str(player_id)[:8],
-        token_or_stack_id,
+        stack_id,
         roll,
     )
 
-    # Check for partial stack format: "stack_id:count"
-    if ":" in token_or_stack_id:
-        stack_id, count_str = token_or_stack_id.rsplit(":", 1)
-        try:
-            count = int(count_str)
-        except ValueError:
-            logger.warning(
-                "Invalid partial stack format: %s",
-                token_or_stack_id,
-            )
-            return ProcessResult.failure(
-                "INVALID_PARTIAL_STACK_FORMAT",
-                f"Invalid partial stack format: {token_or_stack_id}",
-            )
-        logger.debug(
-            "Partial stack move detected: stack=%s, count=%d",
-            stack_id,
-            count,
-        )
-        result = apply_partial_stack_move(
+    # Exact match check: does the player own a stack with this exact stack_id?
+    exact_stack = next(
+        (s for s in current_player.stacks if s.stack_id == stack_id), None
+    )
+
+    if exact_stack is not None:
+        result = apply_stack_move(
             state=state,
             stack_id=stack_id,
-            count=count,
             roll=roll,
             player=current_player,
             board_setup=state.board_setup,
         )
     else:
-        # Determine if this is a token or full stack move
-        is_stack = current_player.stacks and any(
-            s.stack_id == token_or_stack_id for s in current_player.stacks
-        )
-        logger.debug(
-            "Move type: %s (id=%s)",
-            "stack" if is_stack else "token",
-            token_or_stack_id,
-        )
-
-        if is_stack:
-            result = apply_stack_move(
+        # Parent lookup: is stack_id a sub-stack of an existing stack?
+        parent = find_parent_stack(current_player, stack_id)
+        if parent is not None:
+            remaining_id, moving_id = get_split_result(parent.stack_id, stack_id)
+            result = apply_split_move(
                 state=state,
-                stack_id=token_or_stack_id,
+                parent=parent,
+                remaining_id=remaining_id,
+                moving_id=moving_id,
                 roll=roll,
                 player=current_player,
                 board_setup=state.board_setup,
             )
         else:
-            result = apply_token_move(
-                state=state,
-                token_id=token_or_stack_id,
-                roll=roll,
-                player=current_player,
-                board_setup=state.board_setup,
+            logger.warning("Stack not found and no parent: %s", stack_id)
+            return ProcessResult.failure(
+                "STACK_NOT_FOUND",
+                f"Stack {stack_id} not found",
             )
 
     if not result.success:
         logger.warning(
-            "Move failed: piece=%s, error=%s",
-            token_or_stack_id,
+            "Move failed: stack=%s, error=%s",
+            stack_id,
             result.error_code,
         )
         return result
@@ -141,6 +124,313 @@ def process_move(
 
     logger.debug("Move applied successfully, processing post-move logic")
     return process_after_move(result.state, result.events, current_turn, roll)
+
+
+def apply_stack_move(
+    state: GameState,
+    stack_id: str,
+    roll: int,
+    player: Player,
+    board_setup: BoardSetup,
+) -> ProcessResult:
+    """Apply movement to an entire stack (any height, including 1).
+
+    Movement rules:
+    - HELL: If roll is a valid get-out roll, move to ROAD at progress=0.
+    - ROAD/HOMESTRETCH: Roll must be divisible by stack height.
+      Effective movement = roll / height. Progress is updated.
+      If progress reaches squares_to_win -> HEAVEN.
+      If progress reaches squares_to_homestretch -> HOMESTRETCH.
+
+    Args:
+        state: Current game state.
+        stack_id: ID of the stack to move.
+        roll: The dice roll value.
+        player: The player moving the stack.
+        board_setup: Board configuration.
+
+    Returns:
+        ProcessResult with updated state and movement events.
+    """
+    events: list[AnyGameEvent] = []
+
+    # Find the stack
+    stack = next((s for s in player.stacks if s.stack_id == stack_id), None)
+    if stack is None:
+        logger.warning("Stack not found: %s", stack_id)
+        return ProcessResult.failure("STACK_NOT_FOUND", f"Stack {stack_id} not found")
+
+    logger.debug(
+        "Applying stack move: stack=%s, height=%d, state=%s, progress=%d, roll=%d",
+        stack_id,
+        stack.height,
+        stack.state.value,
+        stack.progress,
+        roll,
+    )
+
+    from_state = stack.state
+    from_progress = stack.progress
+    new_state = stack.state
+    new_progress = stack.progress
+
+    if stack.state == StackState.HELL:
+        # Move from HELL to ROAD
+        if roll not in board_setup.get_out_rolls:
+            logger.warning(
+                "Invalid get-out roll: stack=%s, roll=%d, valid_rolls=%s",
+                stack_id,
+                roll,
+                board_setup.get_out_rolls,
+            )
+            return ProcessResult.failure(
+                "INVALID_GET_OUT_ROLL",
+                f"Roll {roll} is not a valid get-out roll",
+            )
+        new_state = StackState.ROAD
+        new_progress = 0
+        logger.info(
+            "Stack exited hell: stack=%s, player=%s",
+            stack_id,
+            str(player.player_id)[:8],
+        )
+        events.append(
+            StackExitedHell(player_id=player.player_id, stack_id=stack_id, roll_used=roll)
+        )
+
+    elif stack.state in (StackState.ROAD, StackState.HOMESTRETCH):
+        if roll % stack.height != 0:
+            logger.warning(
+                "Invalid stack roll: roll=%d, height=%d (not divisible)",
+                roll,
+                stack.height,
+            )
+            return ProcessResult.failure(
+                "INVALID_STACK_ROLL",
+                f"Roll {roll} not divisible by stack height {stack.height}",
+            )
+
+        effective_roll = roll // stack.height
+        new_progress = stack.progress + effective_roll
+        logger.debug(
+            "Effective roll: %d / %d = %d, new_progress=%d",
+            roll,
+            stack.height,
+            effective_roll,
+            new_progress,
+        )
+
+        if new_progress == board_setup.squares_to_win:
+            new_state = StackState.HEAVEN
+            logger.info(
+                "Stack reached heaven: stack=%s, player=%s",
+                stack_id,
+                str(player.player_id)[:8],
+            )
+            events.append(StackReachedHeaven(player_id=player.player_id, stack_id=stack_id))
+        elif new_progress >= board_setup.squares_to_homestretch:
+            new_state = StackState.HOMESTRETCH
+            logger.debug(
+                "Stack entered homestretch: stack=%s, progress=%d",
+                stack_id,
+                new_progress,
+            )
+
+        events.append(
+            StackMoved(
+                player_id=player.player_id,
+                stack_id=stack_id,
+                from_state=from_state,
+                to_state=new_state,
+                from_progress=from_progress,
+                to_progress=new_progress,
+                roll_used=roll,
+            )
+        )
+
+    # Update the stack in the player's stacks list
+    updated_stack = stack.model_copy(update={"state": new_state, "progress": new_progress})
+    updated_stacks = [
+        updated_stack if s.stack_id == stack_id else s for s in player.stacks
+    ]
+    updated_player = player.model_copy(update={"stacks": updated_stacks})
+    updated_players = [
+        updated_player if p.player_id == player.player_id else p for p in state.players
+    ]
+    updated_state = state.model_copy(update={"players": updated_players})
+
+    # Handle collisions on ROAD (not HOMESTRETCH or HEAVEN)
+    if new_state == StackState.ROAD and from_state != StackState.HELL:
+        logger.debug("Checking for collisions at progress=%d", new_progress)
+        collision_result = handle_road_collision(
+            updated_state, updated_stack, updated_player, board_setup, events
+        )
+        if collision_result is not None:
+            return collision_result
+
+    logger.debug(
+        "Stack move complete: stack=%s, %s->%s, progress=%d->%d",
+        stack_id,
+        from_state.value,
+        new_state.value,
+        from_progress,
+        new_progress,
+    )
+    return ProcessResult.ok(updated_state, events)
+
+
+def apply_split_move(
+    state: GameState,
+    parent: Stack,
+    remaining_id: str,
+    moving_id: str,
+    roll: int,
+    player: Player,
+    board_setup: BoardSetup,
+) -> ProcessResult:
+    """Apply a split move: peel a sub-stack off a parent and move it.
+
+    The parent stack is split into:
+    - remaining_stack: stays at parent's position with parent's state
+    - moving_stack: moves forward by effective_roll
+
+    Args:
+        state: Current game state.
+        parent: The parent stack being split.
+        remaining_id: Stack ID for the piece staying behind.
+        moving_id: Stack ID for the piece being moved.
+        roll: The dice roll value.
+        player: The player moving the stack.
+        board_setup: Board configuration.
+
+    Returns:
+        ProcessResult with updated state and movement events.
+    """
+    events: list[AnyGameEvent] = []
+
+    moving_height = len(parse_components(moving_id))
+    remaining_height = len(parse_components(remaining_id))
+
+    logger.debug(
+        "Applying split move: parent=%s, moving=%s (height=%d), remaining=%s (height=%d), roll=%d",
+        parent.stack_id,
+        moving_id,
+        moving_height,
+        remaining_id,
+        remaining_height,
+        roll,
+    )
+
+    if roll % moving_height != 0:
+        logger.warning(
+            "Invalid split roll: roll=%d, moving_height=%d (not divisible)",
+            roll,
+            moving_height,
+        )
+        return ProcessResult.failure(
+            "INVALID_SPLIT_ROLL",
+            f"Roll {roll} not divisible by moving height {moving_height}",
+        )
+
+    effective_roll = roll // moving_height
+    new_progress = parent.progress + effective_roll
+
+    # Determine new state for the moving stack
+    moving_state = parent.state
+    if new_progress == board_setup.squares_to_win:
+        moving_state = StackState.HEAVEN
+    elif new_progress >= board_setup.squares_to_homestretch:
+        moving_state = StackState.HOMESTRETCH
+
+    # Create the remaining stack (same position/state as parent)
+    remaining_stack = Stack(
+        stack_id=remaining_id,
+        state=parent.state,
+        height=remaining_height,
+        progress=parent.progress,
+    )
+
+    # Create the moving stack (new position)
+    moving_stack = Stack(
+        stack_id=moving_id,
+        state=moving_state,
+        height=moving_height,
+        progress=new_progress,
+    )
+
+    logger.info(
+        "Split: parent=%s -> remaining=%s (progress=%d) + moving=%s (progress=%d)",
+        parent.stack_id,
+        remaining_id,
+        parent.progress,
+        moving_id,
+        new_progress,
+    )
+
+    # Emit StackUpdate: remove parent, add remaining + moving
+    events.append(
+        StackUpdate(
+            player_id=player.player_id,
+            remove_stacks=[parent],
+            add_stacks=[remaining_stack, moving_stack],
+        )
+    )
+
+    # Emit StackMoved for the moving stack
+    events.append(
+        StackMoved(
+            player_id=player.player_id,
+            stack_id=moving_id,
+            from_state=parent.state,
+            to_state=moving_state,
+            from_progress=parent.progress,
+            to_progress=new_progress,
+            roll_used=roll,
+        )
+    )
+
+    # If HEAVEN, emit StackReachedHeaven
+    if moving_state == StackState.HEAVEN:
+        logger.info(
+            "Split stack reached heaven: stack=%s, player=%s",
+            moving_id,
+            str(player.player_id)[:8],
+        )
+        events.append(StackReachedHeaven(player_id=player.player_id, stack_id=moving_id))
+
+    # Update player's stacks: remove parent, add remaining + moving
+    updated_stacks = [s for s in player.stacks if s.stack_id != parent.stack_id]
+    updated_stacks.append(remaining_stack)
+    updated_stacks.append(moving_stack)
+
+    updated_player = player.model_copy(update={"stacks": updated_stacks})
+    updated_players = [
+        updated_player if p.player_id == player.player_id else p for p in state.players
+    ]
+    updated_state = state.model_copy(update={"players": updated_players})
+
+    # Handle collisions for moving stack on ROAD
+    if moving_state == StackState.ROAD:
+        # Get the fresh player from updated state
+        fresh_player = next(
+            p for p in updated_state.players if p.player_id == player.player_id
+        )
+        logger.debug("Checking for collisions after split at progress=%d", new_progress)
+        collision_result = handle_road_collision(
+            updated_state, moving_stack, fresh_player, board_setup, events
+        )
+        if collision_result is not None:
+            return collision_result
+
+    logger.debug(
+        "Split move complete: parent=%s, remaining=%s, moving=%s, progress=%d->%d",
+        parent.stack_id,
+        remaining_id,
+        moving_id,
+        parent.progress,
+        new_progress,
+    )
+    return ProcessResult.ok(updated_state, events)
 
 
 def process_after_move(
@@ -175,15 +465,11 @@ def process_after_move(
     )
 
     # Get updated player
-    updated_player = next(
-        p for p in state.players if p.player_id == original_turn.player_id
-    )
+    updated_player = next(p for p in state.players if p.player_id == original_turn.player_id)
 
     # Check for remaining rolls
     if remaining_rolls:
-        legal_moves = get_legal_moves(
-            updated_player, remaining_rolls[0], state.board_setup
-        )
+        legal_moves = get_legal_moves(updated_player, remaining_rolls[0], state.board_setup)
 
         if legal_moves:
             updated_turn = current_turn.model_copy(
@@ -227,9 +513,7 @@ def process_after_move(
             str(original_turn.player_id)[:8],
             current_turn.extra_rolls,
         )
-        events.append(
-            RollGranted(player_id=original_turn.player_id, reason="capture_bonus")
-        )
+        events.append(RollGranted(player_id=original_turn.player_id, reason="capture_bonus"))
         updated_turn = current_turn.model_copy(
             update={
                 "rolls_to_allocate": remaining_rolls,
@@ -250,9 +534,7 @@ def process_after_move(
         "Turn ending: player=%s, reason=all_rolls_used",
         str(original_turn.player_id)[:8],
     )
-    next_turn_order = get_next_turn_order(
-        original_turn.current_turn_order, len(state.players)
-    )
+    next_turn_order = get_next_turn_order(original_turn.current_turn_order, len(state.players))
     next_player = next(p for p in state.players if p.turn_order == next_turn_order)
 
     events.append(
@@ -262,12 +544,8 @@ def process_after_move(
             next_player_id=next_player.player_id,
         )
     )
-    events.append(
-        TurnStarted(player_id=next_player.player_id, turn_number=next_turn_order)
-    )
-    events.append(
-        RollGranted(player_id=next_player.player_id, reason="turn_start")
-    )
+    events.append(TurnStarted(player_id=next_player.player_id, turn_number=next_turn_order))
+    events.append(RollGranted(player_id=next_player.player_id, reason="turn_start"))
 
     new_turn = create_new_turn(turn_order=next_turn_order, players=state.players)
     new_state = state.model_copy(
@@ -284,559 +562,9 @@ def process_after_move(
     return ProcessResult.ok(new_state, events)
 
 
-def apply_token_move(
-    state: GameState,
-    token_id: str,
-    roll: int,
-    player: Player,
-    board_setup: BoardSetup,
-) -> ProcessResult:
-    """Apply movement to a single token.
-
-    Args:
-        state: Current game state.
-        token_id: ID of the token to move.
-        roll: The dice roll value.
-        player: The player moving the token.
-        board_setup: Board configuration.
-
-    Returns:
-        ProcessResult with updated state and movement events.
-    """
-    events: list[AnyGameEvent] = []
-
-    # Find the token
-    token = next((t for t in player.tokens if t.token_id == token_id), None)
-    if token is None:
-        logger.warning("Token not found: %s", token_id)
-        return ProcessResult.failure(
-            "TOKEN_NOT_FOUND", f"Token {token_id} not found"
-        )
-
-    logger.debug(
-        "Applying token move: token=%s, state=%s, progress=%d, roll=%d",
-        token_id,
-        token.state.value,
-        token.progress,
-        roll,
-    )
-
-    # Calculate new state and progress
-    old_state = token.state
-    old_progress = token.progress
-    new_state = token.state
-    new_progress = token.progress
-
-    if token.state == TokenState.HELL:
-        # Move from HELL to ROAD
-        if roll not in board_setup.get_out_rolls:
-            logger.warning(
-                "Invalid get-out roll: token=%s, roll=%d, valid_rolls=%s",
-                token_id,
-                roll,
-                board_setup.get_out_rolls,
-            )
-            return ProcessResult.failure(
-                "INVALID_GET_OUT_ROLL",
-                f"Roll {roll} is not a valid get-out roll",
-            )
-        new_state = TokenState.ROAD
-        new_progress = 0
-        logger.info(
-            "Token exited hell: token=%s, player=%s",
-            token_id,
-            str(player.player_id)[:8],
-        )
-        events.append(
-            TokenExitedHell(player_id=player.player_id, token_id=token_id, roll_used=roll)
-        )
-
-    elif token.state in (TokenState.ROAD, TokenState.HOMESTRETCH):
-        new_progress = token.progress + roll
-
-        if new_progress == board_setup.squares_to_win:
-            new_state = TokenState.HEAVEN
-            logger.info(
-                "Token reached heaven: token=%s, player=%s",
-                token_id,
-                str(player.player_id)[:8],
-            )
-            events.append(
-                TokenReachedHeaven(player_id=player.player_id, token_id=token_id)
-            )
-        elif new_progress >= board_setup.squares_to_homestretch:
-            new_state = TokenState.HOMESTRETCH
-            logger.debug(
-                "Token entered homestretch: token=%s, progress=%d",
-                token_id,
-                new_progress,
-            )
-
-        events.append(
-            TokenMoved(
-                player_id=player.player_id,
-                token_id=token_id,
-                from_state=old_state,
-                to_state=new_state,
-                from_progress=old_progress,
-                to_progress=new_progress,
-                roll_used=roll,
-            )
-        )
-
-    # Create updated token
-    updated_token = token.model_copy(
-        update={"state": new_state, "progress": new_progress}
-    )
-
-    # Update player's tokens list
-    updated_tokens = [
-        updated_token if t.token_id == token_id else t for t in player.tokens
-    ]
-    updated_player = player.model_copy(update={"tokens": updated_tokens})
-
-    # Update game state with updated player
-    updated_players = [
-        updated_player if p.player_id == player.player_id else p
-        for p in state.players
-    ]
-    updated_state = state.model_copy(update={"players": updated_players})
-
-    # Handle collisions on ROAD (not HOMESTRETCH or HEAVEN)
-    if new_state == TokenState.ROAD:
-        logger.debug("Checking for collisions at progress=%d", new_progress)
-        collision_result = handle_road_collision(
-            updated_state, updated_token, updated_player, board_setup, events
-        )
-        if collision_result is not None:
-            return collision_result
-
-    logger.debug(
-        "Token move complete: token=%s, %s->%s, progress=%d->%d",
-        token_id,
-        old_state.value,
-        new_state.value,
-        old_progress,
-        new_progress,
-    )
-    return ProcessResult.ok(updated_state, events)
-
-
-def apply_stack_move(
-    state: GameState,
-    stack_id: str,
-    roll: int,
-    player: Player,
-    board_setup: BoardSetup,
-) -> ProcessResult:
-    """Apply movement to a stack of tokens.
-
-    Stack movement rules:
-    - Roll must be divisible by stack height
-    - Effective movement = roll / stack_height
-    - All tokens in stack move together
-
-    Args:
-        state: Current game state.
-        stack_id: ID of the stack to move.
-        roll: The dice roll value.
-        player: The player moving the stack.
-        board_setup: Board configuration.
-
-    Returns:
-        ProcessResult with updated state and movement events.
-    """
-    events: list[AnyGameEvent] = []
-
-    if not player.stacks:
-        logger.warning("Player has no stacks: player=%s", str(player.player_id)[:8])
-        return ProcessResult.failure("NO_STACKS", "Player has no stacks")
-
-    # Find the stack
-    stack = next((s for s in player.stacks if s.stack_id == stack_id), None)
-    if stack is None:
-        logger.warning("Stack not found: %s", stack_id)
-        return ProcessResult.failure(
-            "STACK_NOT_FOUND", f"Stack {stack_id} not found"
-        )
-
-    stack_height = len(stack.tokens)
-    logger.debug(
-        "Applying stack move: stack=%s, height=%d, roll=%d, tokens=%s",
-        stack_id,
-        stack_height,
-        roll,
-        stack.tokens,
-    )
-
-    if roll % stack_height != 0:
-        logger.warning(
-            "Invalid stack roll: roll=%d, height=%d (not divisible)",
-            roll,
-            stack_height,
-        )
-        return ProcessResult.failure(
-            "INVALID_STACK_ROLL",
-            f"Roll {roll} not divisible by stack height {stack_height}",
-        )
-
-    effective_roll = roll // stack_height
-    logger.debug("Effective roll for stack: %d / %d = %d", roll, stack_height, effective_roll)
-
-    # Get the first token to determine current position
-    first_token_id = stack.tokens[0]
-    first_token = next(
-        (t for t in player.tokens if t.token_id == first_token_id), None
-    )
-    if first_token is None:
-        return ProcessResult.failure(
-            "STACK_TOKEN_NOT_FOUND",
-            f"Stack token {first_token_id} not found",
-        )
-
-    old_progress = first_token.progress
-    new_progress = first_token.progress + effective_roll
-
-    # Determine new state
-    new_token_state = first_token.state
-    if new_progress == board_setup.squares_to_win:
-        new_token_state = TokenState.HEAVEN
-    elif new_progress >= board_setup.squares_to_homestretch:
-        new_token_state = TokenState.HOMESTRETCH
-
-    # Update all tokens in the stack
-    updated_tokens = []
-    for token in player.tokens:
-        if token.token_id in stack.tokens:
-            updated_tokens.append(
-                token.model_copy(
-                    update={"state": new_token_state, "progress": new_progress}
-                )
-            )
-        else:
-            updated_tokens.append(token)
-
-    events.append(
-        StackMoved(
-            player_id=player.player_id,
-            stack_id=stack_id,
-            token_ids=stack.tokens,
-            from_progress=old_progress,
-            to_progress=new_progress,
-            roll_used=roll,
-            effective_roll=effective_roll,
-        )
-    )
-
-    # If stack reached heaven, emit events for each token
-    if new_token_state == TokenState.HEAVEN:
-        logger.info(
-            "Stack reached heaven: stack=%s, tokens=%s, player=%s",
-            stack_id,
-            stack.tokens,
-            str(player.player_id)[:8],
-        )
-        for token_id in stack.tokens:
-            events.append(
-                TokenReachedHeaven(player_id=player.player_id, token_id=token_id)
-            )
-
-    updated_player = player.model_copy(update={"tokens": updated_tokens})
-    updated_players = [
-        updated_player if p.player_id == player.player_id else p
-        for p in state.players
-    ]
-    updated_state = state.model_copy(update={"players": updated_players})
-
-    # Handle collisions on ROAD
-    if new_token_state == TokenState.ROAD:
-        logger.debug("Checking for stack collisions at progress=%d", new_progress)
-        collision_result = handle_road_collision(
-            updated_state, stack, updated_player, board_setup, events
-        )
-        if collision_result is not None:
-            return collision_result
-
-    logger.debug(
-        "Stack move complete: stack=%s, progress=%d->%d, effective_roll=%d",
-        stack_id,
-        old_progress,
-        new_progress,
-        effective_roll,
-    )
-    return ProcessResult.ok(updated_state, events)
-
-
-def apply_partial_stack_move(
-    state: GameState,
-    stack_id: str,
-    count: int,
-    roll: int,
-    player: Player,
-    board_setup: BoardSetup,
-) -> ProcessResult:
-    """Apply movement to a partial stack (subset of tokens).
-
-    Splits the stack and moves only the specified number of tokens.
-    Original stack ID stays with remaining tokens; moving tokens get new ID.
-
-    Args:
-        state: Current game state.
-        stack_id: ID of the stack to split.
-        count: Number of tokens to move from the stack.
-        roll: The dice roll value.
-        player: The player moving the stack.
-        board_setup: Board configuration.
-
-    Returns:
-        ProcessResult with updated state and movement events.
-    """
-    events: list[AnyGameEvent] = []
-
-    logger.debug(
-        "Applying partial stack move: stack=%s, count=%d, roll=%d",
-        stack_id,
-        count,
-        roll,
-    )
-
-    if not player.stacks:
-        logger.warning("Player has no stacks: player=%s", str(player.player_id)[:8])
-        return ProcessResult.failure("NO_STACKS", "Player has no stacks")
-
-    # Find the stack
-    stack = next((s for s in player.stacks if s.stack_id == stack_id), None)
-    if stack is None:
-        logger.warning("Stack not found: %s", stack_id)
-        return ProcessResult.failure(
-            "STACK_NOT_FOUND", f"Stack {stack_id} not found"
-        )
-
-    stack_height = len(stack.tokens)
-    if count < 1 or count >= stack_height:
-        logger.warning(
-            "Invalid partial count: count=%d, stack_height=%d",
-            count,
-            stack_height,
-        )
-        return ProcessResult.failure(
-            "INVALID_PARTIAL_COUNT",
-            f"Partial count {count} must be between 1 and {stack_height - 1}",
-        )
-
-    if roll % count != 0:
-        logger.warning(
-            "Invalid partial roll: roll=%d, count=%d (not divisible)",
-            roll,
-            count,
-        )
-        return ProcessResult.failure(
-            "INVALID_PARTIAL_ROLL",
-            f"Roll {roll} not divisible by partial count {count}",
-        )
-
-    effective_roll = roll // count
-    logger.debug(
-        "Effective roll for partial stack: %d / %d = %d",
-        roll,
-        count,
-        effective_roll,
-    )
-
-    # Get the first token to determine current position
-    first_token_id = stack.tokens[0]
-    first_token = next(
-        (t for t in player.tokens if t.token_id == first_token_id), None
-    )
-    if first_token is None:
-        return ProcessResult.failure(
-            "STACK_TOKEN_NOT_FOUND",
-            f"Stack token {first_token_id} not found",
-        )
-
-    old_progress = first_token.progress
-    new_progress = first_token.progress + effective_roll
-
-    # Check bounds
-    if new_progress > board_setup.squares_to_win:
-        logger.warning(
-            "Move exceeds board: new_progress=%d, max=%d",
-            new_progress,
-            board_setup.squares_to_win,
-        )
-        return ProcessResult.failure(
-            "MOVE_EXCEEDS_BOARD",
-            "Move would exceed board bounds",
-        )
-
-    # Split tokens: first `count` tokens move, rest stay
-    moving_token_ids = stack.tokens[:count]
-    remaining_token_ids = stack.tokens[count:]
-    logger.info(
-        "Splitting stack: stack=%s, moving=%s, remaining=%s",
-        stack_id,
-        moving_token_ids,
-        remaining_token_ids,
-    )
-
-    # Determine new state for moving tokens
-    new_token_state = first_token.state
-    if new_progress == board_setup.squares_to_win:
-        new_token_state = TokenState.HEAVEN
-    elif new_progress >= board_setup.squares_to_homestretch:
-        new_token_state = TokenState.HOMESTRETCH
-
-    # Determine if moving tokens form a stack or become individual
-    moving_is_stack = count >= 2
-    new_stack_id: str | None = None
-    new_stack: Stack | None = None
-
-    if moving_is_stack:
-        new_stack_id = f"{player.player_id}_stack_{state.next_stack_id}"
-        new_stack = Stack(stack_id=new_stack_id, tokens=moving_token_ids)
-        logger.debug("Created new stack for moving tokens: %s", new_stack_id)
-
-    # Emit StackSplit event
-    events.append(
-        StackSplit(
-            player_id=player.player_id,
-            original_stack_id=stack_id,
-            moving_token_ids=moving_token_ids,
-            remaining_token_ids=remaining_token_ids,
-            new_stack_id=new_stack_id,  # None if moving a single token
-        )
-    )
-
-    # Update tokens
-    updated_tokens = []
-    for token in player.tokens:
-        if token.token_id in moving_token_ids:
-            # Moving tokens: update position and state
-            # in_stack=True only if moving 2+ tokens
-            updated_tokens.append(
-                token.model_copy(
-                    update={
-                        "state": new_token_state,
-                        "progress": new_progress,
-                        "in_stack": moving_is_stack,
-                    }
-                )
-            )
-        elif token.token_id in remaining_token_ids:
-            # Remaining tokens: stay in place
-            # If only one token remains, it becomes an individual token
-            if len(remaining_token_ids) == 1:
-                updated_tokens.append(token.model_copy(update={"in_stack": False}))
-            else:
-                updated_tokens.append(token)
-        else:
-            updated_tokens.append(token)
-
-    # Update stacks list
-    updated_stacks = []
-    for s in player.stacks:
-        if s.stack_id == stack_id:
-            # Original stack: update to only have remaining tokens
-            if len(remaining_token_ids) > 1:
-                updated_stacks.append(
-                    Stack(stack_id=stack_id, tokens=remaining_token_ids)
-                )
-            # If only 1 token remains, don't add stack (token becomes individual)
-        else:
-            updated_stacks.append(s)
-
-    # Add the new stack for moving tokens (only if count >= 2)
-    if new_stack is not None:
-        updated_stacks.append(new_stack)
-
-    # Emit movement event
-    if moving_is_stack:
-        # StackMoved for 2+ tokens
-        events.append(
-            StackMoved(
-                player_id=player.player_id,
-                stack_id=new_stack_id,
-                token_ids=moving_token_ids,
-                from_progress=old_progress,
-                to_progress=new_progress,
-                roll_used=roll,
-                effective_roll=effective_roll,
-            )
-        )
-    else:
-        # TokenMoved for single token
-        events.append(
-            TokenMoved(
-                player_id=player.player_id,
-                token_id=moving_token_ids[0],
-                from_state=first_token.state,
-                to_state=new_token_state,
-                from_progress=old_progress,
-                to_progress=new_progress,
-                roll_used=roll,
-            )
-        )
-
-    # If tokens reached heaven, emit events
-    if new_token_state == TokenState.HEAVEN:
-        logger.info(
-            "Split tokens reached heaven: tokens=%s, player=%s",
-            moving_token_ids,
-            str(player.player_id)[:8],
-        )
-        for token_id in moving_token_ids:
-            events.append(
-                TokenReachedHeaven(player_id=player.player_id, token_id=token_id)
-            )
-
-    updated_player = player.model_copy(
-        update={"tokens": updated_tokens, "stacks": updated_stacks or None}
-    )
-    updated_players = [
-        updated_player if p.player_id == player.player_id else p
-        for p in state.players
-    ]
-    # Increment next_stack_id if a new stack was created
-    state_updates: dict = {"players": updated_players}
-    if moving_is_stack:
-        state_updates["next_stack_id"] = state.next_stack_id + 1
-    updated_state = state.model_copy(update=state_updates)
-
-    # Handle collisions on ROAD
-    if new_token_state == TokenState.ROAD:
-        # Get the fresh player from updated state
-        fresh_player = next(
-            p for p in updated_state.players if p.player_id == player.player_id
-        )
-
-        # For collision detection, use the appropriate piece type
-        if moving_is_stack and new_stack is not None:
-            moved_piece: Token | Stack = new_stack
-        else:
-            # Find the updated token for collision detection
-            moved_piece = next(
-                t for t in updated_tokens if t.token_id == moving_token_ids[0]
-            )
-
-        collision_result = handle_road_collision(
-            updated_state, moved_piece, fresh_player, board_setup, events
-        )
-        if collision_result is not None:
-            return collision_result
-
-    logger.debug(
-        "Partial stack move complete: original=%s, moved=%s, progress=%d->%d",
-        stack_id,
-        moving_token_ids,
-        old_progress,
-        new_progress,
-    )
-    return ProcessResult.ok(updated_state, events)
-
-
 def handle_road_collision(
     state: GameState,
-    moved_piece: Token | Stack,
+    moved_piece: Stack,
     player: Player,
     board_setup: BoardSetup,
     events: list[AnyGameEvent],
@@ -845,7 +573,7 @@ def handle_road_collision(
 
     Args:
         state: Current game state after move.
-        moved_piece: The token or stack that just moved.
+        moved_piece: The stack that just moved.
         player: The player who moved.
         board_setup: Board configuration.
         events: Events list to append to.
@@ -867,15 +595,10 @@ def handle_road_collision(
 
     # Process each collision
     for other_player, other_piece in collisions:
-        other_piece_id = (
-            other_piece.token_id
-            if isinstance(other_piece, Token)
-            else other_piece.stack_id
-        )
         logger.debug(
             "Resolving collision with: player=%s, piece=%s, same_player=%s",
             str(other_player.player_id)[:8],
-            other_piece_id,
+            other_piece.stack_id,
             other_player.player_id == player.player_id,
         )
         collision_result = resolve_collision(
