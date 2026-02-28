@@ -99,7 +99,7 @@ def process_action(
         result = process_roll(state, action.value, player_id)
 
     elif isinstance(action, MoveAction):
-        result = process_move(state, action.token_or_stack_id, player_id)
+        result = process_move(state, action.stack_id, player_id)
 
     elif isinstance(action, CaptureChoiceAction):
         result = process_capture_choice(state, action.choice, player_id)
@@ -212,7 +212,7 @@ def process_start_game(state: GameState) -> ProcessResult:
 def check_win_condition(state: GameState) -> UUID | None:
     """Check if any player has won the game.
 
-    A player wins when all their tokens are in HEAVEN.
+    A player wins when all their stacks are in HEAVEN.
 
     Args:
         state: Current game state.
@@ -220,17 +220,10 @@ def check_win_condition(state: GameState) -> UUID | None:
     Returns:
         The winning player's UUID, or None if no winner yet.
     """
-    from app.schemas.game_engine import TokenState
+    from app.schemas.game_engine import StackState
 
     for player in state.players:
-        tokens_in_heaven = sum(1 for t in player.tokens if t.state == TokenState.HEAVEN)
-        logger.debug(
-            "Win check: player=%s, tokens_in_heaven=%d/%d",
-            str(player.player_id)[:8],
-            tokens_in_heaven,
-            len(player.tokens),
-        )
-        if all(token.state == TokenState.HEAVEN for token in player.tokens):
+        if all(stack.state == StackState.HEAVEN for stack in player.stacks):
             logger.info("Winner detected: player=%s", player.player_id)
             return player.player_id
     return None

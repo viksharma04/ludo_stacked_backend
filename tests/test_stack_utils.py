@@ -648,3 +648,74 @@ class TestInitializeGame:
                 assert stack.progress == 0
             stack_ids = sorted(s.stack_id for s in player.stacks)
             assert stack_ids == ["stack_1", "stack_2", "stack_3", "stack_4"]
+
+
+class TestCheckWinCondition:
+    """Test check_win_condition uses Stack model."""
+
+    def test_no_winner_when_stacks_not_in_heaven(self):
+        from app.services.game.engine.process import check_win_condition
+        player = Player(
+            player_id=PLAYER_ID, name="P1", color="red",
+            turn_order=1, abs_starting_index=0,
+            stacks=[
+                Stack(stack_id="stack_1", state=StackState.HEAVEN, height=1, progress=57),
+                Stack(stack_id="stack_2", state=StackState.ROAD, height=1, progress=10),
+                Stack(stack_id="stack_3", state=StackState.HELL, height=1, progress=0),
+                Stack(stack_id="stack_4", state=StackState.HELL, height=1, progress=0),
+            ],
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=BoardSetup(
+                squares_to_win=57, squares_to_homestretch=52,
+                starting_positions=[0], safe_spaces=[], get_out_rolls=[6],
+            ),
+        )
+        assert check_win_condition(state) is None
+
+    def test_winner_when_all_stacks_in_heaven(self):
+        from app.services.game.engine.process import check_win_condition
+        player = Player(
+            player_id=PLAYER_ID, name="P1", color="red",
+            turn_order=1, abs_starting_index=0,
+            stacks=[
+                Stack(stack_id="stack_1", state=StackState.HEAVEN, height=1, progress=57),
+                Stack(stack_id="stack_2", state=StackState.HEAVEN, height=1, progress=57),
+                Stack(stack_id="stack_3", state=StackState.HEAVEN, height=1, progress=57),
+                Stack(stack_id="stack_4", state=StackState.HEAVEN, height=1, progress=57),
+            ],
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=BoardSetup(
+                squares_to_win=57, squares_to_homestretch=52,
+                starting_positions=[0], safe_spaces=[], get_out_rolls=[6],
+            ),
+        )
+        assert check_win_condition(state) == PLAYER_ID
+
+    def test_winner_with_merged_stacks_in_heaven(self):
+        """Win with fewer stacks (some merged) all in heaven."""
+        from app.services.game.engine.process import check_win_condition
+        player = Player(
+            player_id=PLAYER_ID, name="P1", color="red",
+            turn_order=1, abs_starting_index=0,
+            stacks=[
+                Stack(stack_id="stack_1_2_3_4", state=StackState.HEAVEN, height=4, progress=57),
+            ],
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=BoardSetup(
+                squares_to_win=57, squares_to_homestretch=52,
+                starting_positions=[0], safe_spaces=[], get_out_rolls=[6],
+            ),
+        )
+        assert check_win_condition(state) == PLAYER_ID
