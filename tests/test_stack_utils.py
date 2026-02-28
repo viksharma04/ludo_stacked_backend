@@ -261,3 +261,68 @@ class TestMoveActionField:
         action = MoveAction(stack_id="stack_1_2")
         assert action.stack_id == "stack_1_2"
         assert action.action_type == "move"
+
+
+# ---------------------------------------------------------------------------
+# Load legal_moves module directly (avoiding broken __init__.py import chain).
+# ---------------------------------------------------------------------------
+if "app.services.game.engine.legal_moves" not in sys.modules:
+    _legal_spec = importlib.util.spec_from_file_location(
+        "app.services.game.engine.legal_moves",
+        "app/services/game/engine/legal_moves.py",
+    )
+    _legal_mod = importlib.util.module_from_spec(_legal_spec)
+    sys.modules[_legal_spec.name] = _legal_mod
+    _legal_spec.loader.exec_module(_legal_mod)
+
+
+class TestLegalMovesSubStackIds:
+    def test_partial_moves_use_sub_stack_ids(self):
+        from app.services.game.engine.legal_moves import get_legal_moves
+        player = Player(
+            player_id=PLAYER_ID, name="P1", color="red",
+            turn_order=1, abs_starting_index=0,
+            stacks=[Stack(stack_id="stack_1_2_3", state=StackState.ROAD, height=3, progress=10)],
+        )
+        board = BoardSetup(squares_to_win=57, squares_to_homestretch=52,
+                          starting_positions=[0], safe_spaces=[], get_out_rolls=[6])
+        moves = get_legal_moves(player, 6, board)
+        assert "stack_1_2_3" in moves  # full: 6%3==0, eff=2
+        assert "stack_2_3" in moves    # partial 2: 6%2==0, eff=3
+        assert "stack_3" in moves      # partial 1: 6%1==0, eff=6
+        assert not any(":" in m for m in moves)
+
+    def test_hell_stacks_on_get_out_roll(self):
+        from app.services.game.engine.legal_moves import get_legal_moves
+        player = Player(
+            player_id=PLAYER_ID, name="P1", color="red",
+            turn_order=1, abs_starting_index=0,
+            stacks=[Stack(stack_id="stack_4", state=StackState.HELL, height=1, progress=0)],
+        )
+        board = BoardSetup(squares_to_win=57, squares_to_homestretch=52,
+                          starting_positions=[0], safe_spaces=[], get_out_rolls=[6])
+        moves = get_legal_moves(player, 6, board)
+        assert "stack_4" in moves
+
+
+class TestGetLegalMoveGroups:
+    def test_groups_by_parent(self):
+        from app.services.game.engine.legal_moves import get_legal_move_groups
+        player = Player(
+            player_id=PLAYER_ID, name="P1", color="red",
+            turn_order=1, abs_starting_index=0,
+            stacks=[
+                Stack(stack_id="stack_1_2_3", state=StackState.ROAD, height=3, progress=10),
+                Stack(stack_id="stack_4", state=StackState.HELL, height=1, progress=0),
+            ],
+        )
+        board = BoardSetup(squares_to_win=57, squares_to_homestretch=52,
+                          starting_positions=[0], safe_spaces=[], get_out_rolls=[6])
+        groups = get_legal_move_groups(player, 6, board)
+        assert len(groups) == 2
+        stack_group = next(g for g in groups if g.stack_id == "stack_1_2_3")
+        assert "stack_1_2_3" in stack_group.moves
+        assert "stack_2_3" in stack_group.moves
+        assert "stack_3" in stack_group.moves
+        hell_group = next(g for g in groups if g.stack_id == "stack_4")
+        assert hell_group.moves == ["stack_4"]
