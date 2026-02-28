@@ -1,8 +1,8 @@
 """Tests for game winning and finishing scenarios.
 
 Critical scenarios tested:
-- Single token reaches heaven
-- All tokens reach heaven (game finished)
+- Single stack reaches heaven
+- All stacks reach heaven (game finished)
 - Exact roll required to reach heaven
 - Cannot overshoot heaven
 
@@ -18,31 +18,31 @@ from app.schemas.game_engine import (
     CurrentEvent,
     GamePhase,
     GameState,
-    TokenState,
+    StackState,
     Turn,
 )
 from app.services.game.engine import MoveAction, RollAction, process_action
-from app.services.game.engine.events import TokenReachedHeaven
+from app.services.game.engine.events import StackReachedHeaven
 
 from .conftest import (
     PLAYER_1_ID,
     PLAYER_2_ID,
     create_player,
-    create_token,
+    create_stack,
 )
 
 
-class TestTokenReachingHeaven:
-    """Test tokens reaching the HEAVEN state (finished)."""
+class TestStackReachingHeaven:
+    """Test stacks reaching the HEAVEN state (finished)."""
 
-    def test_token_reaches_heaven_with_exact_roll(self, two_player_board_setup: BoardSetup):
-        """Token should reach HEAVEN with exact roll to squares_to_win."""
-        # Player 1 with token at position 55 (needs exactly 2 to win at 57)
-        player1_tokens = [
-            create_token(f"{PLAYER_1_ID}_token_1", TokenState.HOMESTRETCH, 55),
-            create_token(f"{PLAYER_1_ID}_token_2", TokenState.HELL, 0),
-            create_token(f"{PLAYER_1_ID}_token_3", TokenState.HELL, 0),
-            create_token(f"{PLAYER_1_ID}_token_4", TokenState.HELL, 0),
+    def test_stack_reaches_heaven_with_exact_roll(self, two_player_board_setup: BoardSetup):
+        """Stack should reach HEAVEN with exact roll to squares_to_win."""
+        # Player 1 with stack at progress 55 (needs exactly 2 to win at 57)
+        player1_stacks = [
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 55),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         player1 = create_player(
             player_id=PLAYER_1_ID,
@@ -50,7 +50,7 @@ class TestTokenReachingHeaven:
             color="red",
             turn_order=1,
             abs_starting_index=0,
-            tokens=player1_tokens,
+            stacks=player1_stacks,
         )
         player2 = create_player(
             player_id=PLAYER_2_ID,
@@ -83,36 +83,35 @@ class TestTokenReachingHeaven:
 
         # Should have legal move
         assert state.current_event == CurrentEvent.PLAYER_CHOICE
-        token_id = f"{PLAYER_1_ID}_token_1"
-        assert token_id in state.current_turn.legal_moves
+        assert "stack_1" in state.current_turn.legal_moves
 
         # Make the move
-        result = process_action(state, MoveAction(token_or_stack_id=token_id), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
         assert result.success
 
-        # Verify TokenReachedHeaven event
+        # Verify StackReachedHeaven event
         heaven_event = next(
-            (e for e in result.events if e.event_type == "token_reached_heaven"), None
+            (e for e in result.events if e.event_type == "stack_reached_heaven"), None
         )
         assert heaven_event is not None
-        assert isinstance(heaven_event, TokenReachedHeaven)
-        assert heaven_event.token_id == token_id
+        assert isinstance(heaven_event, StackReachedHeaven)
+        assert heaven_event.stack_id == "stack_1"
 
-        # Verify token state
+        # Verify stack state
         new_state = result.state
         player1 = next(p for p in new_state.players if p.player_id == PLAYER_1_ID)
-        token = next(t for t in player1.tokens if t.token_id == token_id)
-        assert token.state == TokenState.HEAVEN
-        assert token.progress == 57  # squares_to_win
+        stack = next(s for s in player1.stacks if s.stack_id == "stack_1")
+        assert stack.state == StackState.HEAVEN
+        assert stack.progress == 57  # squares_to_win
 
     def test_cannot_overshoot_heaven(self, two_player_board_setup: BoardSetup):
-        """Token cannot move if roll would exceed squares_to_win."""
-        # Player 1 with token at position 55 (needs exactly 2 to win at 57)
-        player1_tokens = [
-            create_token(f"{PLAYER_1_ID}_token_1", TokenState.HOMESTRETCH, 55),
-            create_token(f"{PLAYER_1_ID}_token_2", TokenState.HELL, 0),
-            create_token(f"{PLAYER_1_ID}_token_3", TokenState.HELL, 0),
-            create_token(f"{PLAYER_1_ID}_token_4", TokenState.HELL, 0),
+        """Stack cannot move if roll would exceed squares_to_win."""
+        # Player 1 with stack at progress 55 (needs exactly 2 to win at 57)
+        player1_stacks = [
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 55),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         player1 = create_player(
             player_id=PLAYER_1_ID,
@@ -120,7 +119,7 @@ class TestTokenReachingHeaven:
             color="red",
             turn_order=1,
             abs_starting_index=0,
-            tokens=player1_tokens,
+            stacks=player1_stacks,
         )
         player2 = create_player(
             player_id=PLAYER_2_ID,
@@ -154,14 +153,14 @@ class TestTokenReachingHeaven:
         event_types = [e.event_type for e in result.events]
         assert "turn_ended" in event_types
 
-    def test_token_in_homestretch_state(self, two_player_board_setup: BoardSetup):
-        """Token should transition to HOMESTRETCH state when entering final stretch."""
-        # Player 1 with token at position 50 (enters homestretch at 52)
-        player1_tokens = [
-            create_token(f"{PLAYER_1_ID}_token_1", TokenState.ROAD, 50),
-            create_token(f"{PLAYER_1_ID}_token_2", TokenState.HELL, 0),
-            create_token(f"{PLAYER_1_ID}_token_3", TokenState.HELL, 0),
-            create_token(f"{PLAYER_1_ID}_token_4", TokenState.HELL, 0),
+    def test_stack_in_homestretch_state(self, two_player_board_setup: BoardSetup):
+        """Stack should transition to HOMESTRETCH state when entering final stretch."""
+        # Player 1 with stack at progress 50 (enters homestretch at 52)
+        player1_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 50),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         player1 = create_player(
             player_id=PLAYER_1_ID,
@@ -169,7 +168,7 @@ class TestTokenReachingHeaven:
             color="red",
             turn_order=1,
             abs_starting_index=0,
-            tokens=player1_tokens,
+            stacks=player1_stacks,
         )
         player2 = create_player(
             player_id=PLAYER_2_ID,
@@ -201,29 +200,28 @@ class TestTokenReachingHeaven:
         state = result.state
 
         # Make the move
-        token_id = f"{PLAYER_1_ID}_token_1"
-        result = process_action(state, MoveAction(token_or_stack_id=token_id), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
         assert result.success
 
-        # Verify token is now in HOMESTRETCH
+        # Verify stack is now in HOMESTRETCH
         new_state = result.state
         player1 = next(p for p in new_state.players if p.player_id == PLAYER_1_ID)
-        token = next(t for t in player1.tokens if t.token_id == token_id)
-        assert token.state == TokenState.HOMESTRETCH
-        assert token.progress == 53
+        stack = next(s for s in player1.stacks if s.stack_id == "stack_1")
+        assert stack.state == StackState.HOMESTRETCH
+        assert stack.progress == 53
 
 
-class TestAllTokensInHeaven:
-    """Test scenarios where all tokens reach heaven."""
+class TestAllStacksInHeaven:
+    """Test scenarios where all stacks reach heaven."""
 
-    def test_last_token_reaching_heaven(self, two_player_board_setup: BoardSetup):
-        """When last token reaches heaven, appropriate events should fire."""
-        # Player 1 with 3 tokens in heaven, 1 about to finish
-        player1_tokens = [
-            create_token(f"{PLAYER_1_ID}_token_1", TokenState.HOMESTRETCH, 55),  # Needs 2
-            create_token(f"{PLAYER_1_ID}_token_2", TokenState.HEAVEN, 57),
-            create_token(f"{PLAYER_1_ID}_token_3", TokenState.HEAVEN, 57),
-            create_token(f"{PLAYER_1_ID}_token_4", TokenState.HEAVEN, 57),
+    def test_last_stack_reaching_heaven(self, two_player_board_setup: BoardSetup):
+        """When last stack reaches heaven, appropriate events should fire."""
+        # Player 1 with 3 stacks in heaven, 1 about to finish
+        player1_stacks = [
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 55),  # Needs 2
+            create_stack("stack_2", StackState.HEAVEN, 1, 57),
+            create_stack("stack_3", StackState.HEAVEN, 1, 57),
+            create_stack("stack_4", StackState.HEAVEN, 1, 57),
         ]
         player1 = create_player(
             player_id=PLAYER_1_ID,
@@ -231,7 +229,7 @@ class TestAllTokensInHeaven:
             color="red",
             turn_order=1,
             abs_starting_index=0,
-            tokens=player1_tokens,
+            stacks=player1_stacks,
         )
         player2 = create_player(
             player_id=PLAYER_2_ID,
@@ -257,24 +255,23 @@ class TestAllTokensInHeaven:
             current_turn=turn,
         )
 
-        # Roll 2 and move last token
+        # Roll 2 and move last stack
         result = process_action(state, RollAction(value=2), PLAYER_1_ID)
         state = result.state
 
-        token_id = f"{PLAYER_1_ID}_token_1"
-        result = process_action(state, MoveAction(token_or_stack_id=token_id), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
         assert result.success
 
-        # Verify TokenReachedHeaven event
+        # Verify StackReachedHeaven event
         heaven_event = next(
-            (e for e in result.events if e.event_type == "token_reached_heaven"), None
+            (e for e in result.events if e.event_type == "stack_reached_heaven"), None
         )
         assert heaven_event is not None
 
-        # Verify all tokens are in heaven
+        # Verify all stacks are in heaven
         new_state = result.state
         player1 = next(p for p in new_state.players if p.player_id == PLAYER_1_ID)
-        assert all(t.state == TokenState.HEAVEN for t in player1.tokens)
+        assert all(s.state == StackState.HEAVEN for s in player1.stacks)
 
 
 # TODO: Good to have tests
@@ -299,6 +296,6 @@ class TestAllTokensInHeaven:
 # class TestStackReachingHeaven:
 #     """Test stacks reaching heaven."""
 #
-#     def test_stack_reaching_heaven_finishes_all_tokens(self):
-#         """All tokens in a stack should finish when stack reaches heaven."""
+#     def test_stack_reaching_heaven_finishes_all_pieces(self):
+#         """All pieces in a stack should finish when stack reaches heaven."""
 #         pass

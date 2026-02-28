@@ -17,7 +17,7 @@ from app.schemas.game_engine import (
     CurrentEvent,
     GamePhase,
     GameState,
-    TokenState,
+    StackState,
     Turn,
 )
 from app.services.game.engine import RollAction, process_action
@@ -33,7 +33,7 @@ from .conftest import (
     PLAYER_3_ID,
     PLAYER_4_ID,
     create_player,
-    create_token,
+    create_stack,
 )
 
 
@@ -81,9 +81,9 @@ class TestThreeSixesPenalty:
         assert new_state.current_turn.player_id == PLAYER_2_ID
         assert new_state.current_event == CurrentEvent.PLAYER_ROLL
 
-    def test_three_sixes_loses_accumulated_rolls(self, game_with_token_on_road: GameState):
+    def test_three_sixes_loses_accumulated_rolls(self, game_with_stack_on_road: GameState):
         """When three sixes are rolled, all accumulated rolls are lost."""
-        state = game_with_token_on_road
+        state = game_with_stack_on_road
 
         # Roll three 6s
         for _ in range(3):
@@ -100,7 +100,7 @@ class TestNoLegalMoves:
     """Test scenarios where player has no legal moves."""
 
     def test_no_legal_moves_all_in_hell_non_six(self, game_player1_turn: GameState):
-        """Rolling non-6 with all tokens in HELL ends turn immediately."""
+        """Rolling non-6 with all stacks in HELL ends turn immediately."""
         state = game_player1_turn
 
         # Roll a 3 (not a get-out roll)
@@ -125,13 +125,13 @@ class TestNoLegalMoves:
         assert result.state.current_event == CurrentEvent.PLAYER_ROLL
 
     def test_no_legal_moves_blocked_by_board_limit(self, two_player_board_setup):
-        """Token at position 55 with roll 3 cannot move (would exceed 57)."""
-        # Player 1 with token in homestretch at position 55 (needs exactly 2 to win)
-        player1_tokens = [
-            create_token(f"{PLAYER_1_ID}_token_1", TokenState.HOMESTRETCH, 55),
-            create_token(f"{PLAYER_1_ID}_token_2", TokenState.HELL, 0),
-            create_token(f"{PLAYER_1_ID}_token_3", TokenState.HELL, 0),
-            create_token(f"{PLAYER_1_ID}_token_4", TokenState.HELL, 0),
+        """Stack at position 55 with roll 3 cannot move (would exceed 57)."""
+        # Player 1 with stack in homestretch at position 55 (needs exactly 2 to win)
+        player1_stacks = [
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 55),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         player1 = create_player(
             player_id=PLAYER_1_ID,
@@ -139,7 +139,7 @@ class TestNoLegalMoves:
             color="red",
             turn_order=1,
             abs_starting_index=0,
-            tokens=player1_tokens,
+            stacks=player1_stacks,
         )
         player2 = create_player(
             player_id=PLAYER_2_ID,
@@ -197,7 +197,7 @@ class TestRollingSix:
         assert result.state.current_turn.rolls_to_allocate == [6]
 
     def test_rolling_six_with_all_in_hell_waits_for_second_roll(self, game_player1_turn: GameState):
-        """Rolling 6 with all tokens in hell should wait for second roll, not immediately offer move."""
+        """Rolling 6 with all stacks in hell should wait for second roll, not immediately offer move."""
         result = process_action(game_player1_turn, RollAction(value=6), PLAYER_1_ID)
 
         assert result.success
@@ -247,9 +247,9 @@ class TestTurnTransitions:
 class TestDiceRolledEvents:
     """Test DiceRolled event details."""
 
-    def test_dice_rolled_event_increments_roll_number(self, game_with_token_on_road: GameState):
+    def test_dice_rolled_event_increments_roll_number(self, game_with_stack_on_road: GameState):
         """Roll number should increment with each roll in a turn."""
-        state = game_with_token_on_road
+        state = game_with_stack_on_road
 
         # First roll
         result = process_action(state, RollAction(value=6), PLAYER_1_ID)

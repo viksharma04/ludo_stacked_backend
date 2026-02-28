@@ -45,7 +45,7 @@ class TestGamePhaseValidation:
         """Moving before game starts should fail."""
         result = process_action(
             two_player_game_not_started,
-            MoveAction(token_or_stack_id=f"{PLAYER_1_ID}_token_1"),
+            MoveAction(stack_id="stack_1"),
             PLAYER_1_ID,
         )
 
@@ -107,16 +107,16 @@ class TestTurnValidation:
         assert not result.success
         assert result.error_code == "NOT_YOUR_TURN"
 
-    def test_cannot_move_on_other_players_turn(self, game_with_token_on_road: GameState):
+    def test_cannot_move_on_other_players_turn(self, game_with_stack_on_road: GameState):
         """Player 2 cannot move on Player 1's turn."""
         # First roll to get to choice state
-        result = process_action(game_with_token_on_road, RollAction(value=3), PLAYER_1_ID)
+        result = process_action(game_with_stack_on_road, RollAction(value=3), PLAYER_1_ID)
         state = result.state
 
         # Player 2 tries to move
         result = process_action(
             state,
-            MoveAction(token_or_stack_id=f"{PLAYER_1_ID}_token_1"),
+            MoveAction(stack_id="stack_1"),
             PLAYER_2_ID,
         )
 
@@ -131,17 +131,17 @@ class TestActionTypeValidation:
         """Cannot move when game is waiting for roll."""
         result = process_action(
             game_player1_turn,
-            MoveAction(token_or_stack_id=f"{PLAYER_1_ID}_token_1"),
+            MoveAction(stack_id="stack_1"),
             PLAYER_1_ID,
         )
 
         assert not result.success
         assert result.error_code == "INVALID_ACTION"
 
-    def test_cannot_roll_when_move_expected(self, game_with_token_on_road: GameState):
+    def test_cannot_roll_when_move_expected(self, game_with_stack_on_road: GameState):
         """Cannot roll when game is waiting for move choice."""
         # First roll to get to choice state
-        result = process_action(game_with_token_on_road, RollAction(value=3), PLAYER_1_ID)
+        result = process_action(game_with_stack_on_road, RollAction(value=3), PLAYER_1_ID)
         state = result.state
         assert state.current_event == CurrentEvent.PLAYER_CHOICE
 
@@ -181,27 +181,26 @@ class TestStartGameAction:
 class TestIllegalMoveValidation:
     """Test validation of illegal moves."""
 
-    def test_cannot_move_token_not_in_legal_moves(self, game_with_token_on_road: GameState):
-        """Cannot move a token that's not in legal moves."""
+    def test_cannot_move_stack_not_in_legal_moves(self, game_with_stack_on_road: GameState):
+        """Cannot move a stack that's not in legal moves."""
         # Roll to get to choice state
-        result = process_action(game_with_token_on_road, RollAction(value=3), PLAYER_1_ID)
+        result = process_action(game_with_stack_on_road, RollAction(value=3), PLAYER_1_ID)
         state = result.state
 
-        # Try to move a token in hell (not a legal move with roll of 3)
-        illegal_token = f"{PLAYER_1_ID}_token_2"  # In hell
-        result = process_action(state, MoveAction(token_or_stack_id=illegal_token), PLAYER_1_ID)
+        # Try to move a stack in hell (not a legal move with roll of 3)
+        result = process_action(state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
 
         assert not result.success
         assert result.error_code == "ILLEGAL_MOVE"
 
-    def test_cannot_move_nonexistent_token(self, game_with_token_on_road: GameState):
-        """Cannot move a token that doesn't exist."""
+    def test_cannot_move_nonexistent_stack(self, game_with_stack_on_road: GameState):
+        """Cannot move a stack that doesn't exist."""
         # Roll to get to choice state
-        result = process_action(game_with_token_on_road, RollAction(value=3), PLAYER_1_ID)
+        result = process_action(game_with_stack_on_road, RollAction(value=3), PLAYER_1_ID)
         state = result.state
 
-        # Try to move a nonexistent token
-        result = process_action(state, MoveAction(token_or_stack_id="fake_token"), PLAYER_1_ID)
+        # Try to move a nonexistent stack
+        result = process_action(state, MoveAction(stack_id="fake_stack"), PLAYER_1_ID)
 
         assert not result.success
         assert result.error_code == "ILLEGAL_MOVE"
