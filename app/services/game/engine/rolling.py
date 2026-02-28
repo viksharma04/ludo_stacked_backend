@@ -169,26 +169,40 @@ def process_roll(state: GameState, roll_value: int, player_id: UUID) -> ProcessR
         )
         return ProcessResult.ok(new_state, events)
 
-    # Check for legal moves with the first unallocated roll
+    # Check for legal moves across all accumulated rolls
     current_player = next(
         p for p in state.players if p.player_id == current_turn.player_id
     )
-    legal_moves = get_legal_moves(current_player, new_rolls[0], state.board_setup)
-    logger.debug(
-        "Legal moves for roll %d: %s",
-        new_rolls[0],
-        legal_moves if legal_moves else "none",
-    )
 
-    if legal_moves:
+    # Find first roll with legal moves (skip rolls that have none)
+    usable_index = None
+    legal_moves: list[str] = []
+    for i, roll in enumerate(new_rolls):
+        moves = get_legal_moves(current_player, roll, state.board_setup)
+        logger.debug(
+            "Legal moves for roll %d: %s",
+            roll,
+            moves if moves else "none",
+        )
+        if moves:
+            usable_index = i
+            legal_moves = moves
+            break
+
+    if usable_index is not None:
+        usable_roll = new_rolls[usable_index]
+        # Reorder so the usable roll is first (process_move uses rolls_to_allocate[0])
+        reordered_rolls = [usable_roll] + new_rolls[:usable_index] + new_rolls[usable_index + 1:]
         # Build grouped format for frontend
-        legal_move_groups = get_legal_move_groups(current_player, new_rolls[0], state.board_setup)
-        updated_turn = updated_turn.model_copy(update={"legal_moves": legal_moves})
+        legal_move_groups = get_legal_move_groups(current_player, usable_roll, state.board_setup)
+        updated_turn = updated_turn.model_copy(
+            update={"rolls_to_allocate": reordered_rolls, "legal_moves": legal_moves}
+        )
         events.append(
             AwaitingChoice(
                 player_id=player_id,
                 legal_moves=legal_move_groups,
-                roll_to_allocate=new_rolls[0],
+                roll_to_allocate=usable_roll,
             )
         )
         new_state = state.model_copy(
@@ -201,7 +215,7 @@ def process_roll(state: GameState, roll_value: int, player_id: UUID) -> ProcessR
             "Awaiting player choice: player=%s, legal_moves=%d, roll=%d",
             str(player_id)[:8],
             len(legal_moves),
-            new_rolls[0],
+            usable_roll,
         )
         return ProcessResult.ok(new_state, events)
 

@@ -242,39 +242,39 @@ class TestDoubleSixFlow:
         assert awaiting2 is not None
         assert awaiting2.roll_to_allocate == 6
 
-        # Step 5: Move stack_2 -> exits HELL
+        # Step 5: Move stack_2 -> exits HELL, merges with stack_1 at progress=0 -> stack_1_2
         result5 = process_action(result4.state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
         assert result5.success
         assert result5.state is not None
         exited2 = find_event(result5.events, StackExitedHell)
         assert exited2 is not None
         assert exited2.stack_id == "stack_2"
-        # Remaining roll [3] -> legal moves for stack_1 or stack_2 (both at progress=0)
+        # Remaining roll [3] -> split stack_2 off stack_1_2 (height=1, roll 3)
         awaiting3 = find_event(result5.events, AwaitingChoice)
         assert awaiting3 is not None
         assert awaiting3.roll_to_allocate == 3
 
-        # Step 6: Move stack_1 forward by 3 (progress 0 -> 3)
-        result6 = process_action(result5.state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        # Step 6: Split stack_2 from stack_1_2 and move forward by 3 (progress 0 -> 3)
+        result6 = process_action(result5.state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
         assert result6.success
         assert result6.state is not None
         moved = find_event(result6.events, StackMoved)
         assert moved is not None
-        assert moved.stack_id == "stack_1"
+        assert moved.stack_id == "stack_2"
         assert moved.to_progress == 3
 
         # Turn should have ended
         turn_ended = find_event(result6.events, TurnEnded)
         assert turn_ended is not None
 
-        # Final: stack_1 progress=3 ROAD, stack_2 progress=0 ROAD
+        # Final: stack_1 progress=0 ROAD, stack_2 progress=3 ROAD
         p1_final = next(p for p in result6.state.players if p.player_id == PLAYER_1_ID)
         s1 = next(s for s in p1_final.stacks if s.stack_id == "stack_1")
         s2 = next(s for s in p1_final.stacks if s.stack_id == "stack_2")
         assert s1.state == StackState.ROAD
-        assert s1.progress == 3
+        assert s1.progress == 0
         assert s2.state == StackState.ROAD
-        assert s2.progress == 0
+        assert s2.progress == 3
 
 
 class TestThreeSixesPenaltyFlow:

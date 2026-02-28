@@ -165,11 +165,12 @@ class TestMultipleGetOuts:
                 result = process_action(state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
                 assert result.success
 
-                # Verify second stack is now on road
+                # stack_2 exited HELL and merged with stack_1 at progress=0 -> stack_1_2
                 new_state = result.state
                 player1 = next(p for p in new_state.players if p.player_id == PLAYER_1_ID)
-                stack2 = next(s for s in player1.stacks if s.stack_id == "stack_2")
-                assert stack2.state == StackState.ROAD
+                merged = next(s for s in player1.stacks if s.stack_id == "stack_1_2")
+                assert merged.state == StackState.ROAD
+                assert merged.height == 2
 
 
 # TODO: Good to have tests

@@ -260,7 +260,7 @@ def apply_stack_move(
     updated_state = state.model_copy(update={"players": updated_players})
 
     # Handle collisions on ROAD (not HOMESTRETCH or HEAVEN)
-    if new_state == StackState.ROAD and from_state != StackState.HELL:
+    if new_state == StackState.ROAD:
         logger.debug("Checking for collisions at progress=%d", new_progress)
         collision_result = handle_road_collision(
             updated_state, updated_stack, updated_player, board_setup, events
@@ -467,15 +467,25 @@ def process_after_move(
     # Get updated player
     updated_player = next(p for p in state.players if p.player_id == original_turn.player_id)
 
-    # Check for remaining rolls
+    # Check for remaining rolls — find first with legal moves
     if remaining_rolls:
-        legal_moves = get_legal_moves(updated_player, remaining_rolls[0], state.board_setup)
+        usable_index = None
+        legal_moves: list[str] = []
+        for i, roll in enumerate(remaining_rolls):
+            moves = get_legal_moves(updated_player, roll, state.board_setup)
+            if moves:
+                usable_index = i
+                legal_moves = moves
+                break
 
-        if legal_moves:
-            legal_move_groups = get_legal_move_groups(updated_player, remaining_rolls[0], state.board_setup)
+        if usable_index is not None:
+            usable_roll = remaining_rolls[usable_index]
+            # Reorder so usable roll is first
+            reordered = [usable_roll] + remaining_rolls[:usable_index] + remaining_rolls[usable_index + 1:]
+            legal_move_groups = get_legal_move_groups(updated_player, usable_roll, state.board_setup)
             updated_turn = current_turn.model_copy(
                 update={
-                    "rolls_to_allocate": remaining_rolls,
+                    "rolls_to_allocate": reordered,
                     "legal_moves": legal_moves,
                 }
             )
@@ -483,7 +493,7 @@ def process_after_move(
                 AwaitingChoice(
                     player_id=original_turn.player_id,
                     legal_moves=legal_move_groups,
-                    roll_to_allocate=remaining_rolls[0],
+                    roll_to_allocate=usable_roll,
                 )
             )
             new_state = state.model_copy(
@@ -495,15 +505,15 @@ def process_after_move(
             logger.info(
                 "More moves available: player=%s, remaining_roll=%d, legal_moves=%d",
                 str(original_turn.player_id)[:8],
-                remaining_rolls[0],
+                usable_roll,
                 len(legal_moves),
             )
             return ProcessResult.ok(new_state, events)
 
-        # No legal moves for remaining rolls
+        # No legal moves for any remaining roll
         logger.debug(
-            "No legal moves for remaining roll %d, clearing remaining_rolls",
-            remaining_rolls[0],
+            "No legal moves for any remaining rolls %s, clearing",
+            remaining_rolls,
         )
         remaining_rolls = []
 

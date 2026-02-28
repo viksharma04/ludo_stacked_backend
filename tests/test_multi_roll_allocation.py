@@ -477,11 +477,11 @@ class TestMultipleMovesInTurn:
         2. Roll 6 -> extra roll
         3. Roll 3 -> rolls = [6, 6, 3], legal moves for 6 -> exit HELL
         4. Move stack_1 -> exits HELL (progress=0)
-        5. Next roll 6 -> move stack_2 -> exits HELL (progress=0)
-        6. Next roll 3 -> stack_1 at progress=0 can move 3
-        7. Move stack_1 -> progress=3
+        5. Next roll 6 -> move stack_2 -> exits HELL, merges with stack_1 -> stack_1_2 (height=2)
+        6. Remaining roll 3 -> split stack_2 off stack_1_2 and move 3
+        7. Move stack_2 -> progress=3
 
-        Final: stack_1 ROAD progress=3, stack_2 ROAD progress=0.
+        Final: stack_1 ROAD progress=0, stack_2 ROAD progress=3.
         """
         player1_stacks = create_stacks_in_hell()
         player2_stacks = create_stacks_in_hell()
@@ -544,7 +544,8 @@ class TestMultipleMovesInTurn:
         assert len(exit_events2) == 1
         assert exit_events2[0].stack_id == "stack_2"
 
-        # Remaining roll should be [3]. stack_1 at progress=0 can move 3.
+        # stack_1 and stack_2 merged into stack_1_2 (height=2) at progress=0.
+        # Remaining roll [3]: split stack_2 off stack_1_2 (height=1, roll 3).
         assert r5.state.current_turn is not None
         assert r5.state.current_event == CurrentEvent.PLAYER_CHOICE
 
@@ -554,17 +555,17 @@ class TestMultipleMovesInTurn:
         offered2 = set()
         for group in awaiting2[0].legal_moves:
             offered2.update(group.moves)
-        assert "stack_1" in offered2, (
-            "stack_1 (ROAD progress=0) should be movable with roll 3"
+        assert "stack_2" in offered2, (
+            "stack_2 (split from stack_1_2) should be movable with roll 3"
         )
 
-        # Move stack_1 with roll 3 -> progress=3
-        r6 = process_action(r5.state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        # Move stack_2 (split from stack_1_2) with roll 3 -> progress=3
+        r6 = process_action(r5.state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
         assert r6.success and r6.state is not None
 
         moved = [e for e in r6.events if isinstance(e, StackMoved)]
         assert len(moved) == 1
-        assert moved[0].stack_id == "stack_1"
+        assert moved[0].stack_id == "stack_2"
         assert moved[0].to_progress == 3
 
         # Verify final state
@@ -575,9 +576,9 @@ class TestMultipleMovesInTurn:
         s2 = next(s for s in final_p1.stacks if s.stack_id == "stack_2")
 
         assert s1.state == StackState.ROAD
-        assert s1.progress == 3
+        assert s1.progress == 0
         assert s2.state == StackState.ROAD
-        assert s2.progress == 0
+        assert s2.progress == 3
 
 
 # ---------------------------------------------------------------------------

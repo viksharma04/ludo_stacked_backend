@@ -367,11 +367,14 @@ class TestMultipleExitsInTurn:
         assert result.success
         state = result.state
 
-        # Verify stack_2 also exited
+        # Verify stack_2 exited and merged with stack_1 at progress=0
         player1 = next(p for p in state.players if p.player_id == PLAYER_1_ID)
-        stack_2 = next(s for s in player1.stacks if s.stack_id == "stack_2")
-        assert stack_2.state == StackState.ROAD
-        assert stack_2.progress == 0
+        stack_ids = [s.stack_id for s in player1.stacks]
+        assert "stack_1_2" in stack_ids
+        merged = next(s for s in player1.stacks if s.stack_id == "stack_1_2")
+        assert merged.state == StackState.ROAD
+        assert merged.progress == 0
+        assert merged.height == 2
 
 
 class TestExitEvents:
