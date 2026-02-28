@@ -13,11 +13,11 @@ class RollAction(BaseModel):
 
 
 class MoveAction(BaseModel):
-    """Player selects a token or stack to move."""
+    """Player selects a stack to move."""
 
     action_type: Literal["move"] = "move"
-    token_or_stack_id: str = Field(
-        ..., description="ID of the token or stack to move"
+    stack_id: str = Field(
+        ..., description="ID of the stack to move"
     )
 
 

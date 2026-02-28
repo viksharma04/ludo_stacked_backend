@@ -188,15 +188,15 @@ def validate_action(
             )
 
         # Check move is in legal moves
-        if action.token_or_stack_id not in state.current_turn.legal_moves:
+        if action.stack_id not in state.current_turn.legal_moves:
             logger.warning(
                 "Validation failed: ILLEGAL_MOVE, requested=%s, legal_moves=%s",
-                action.token_or_stack_id,
+                action.stack_id,
                 state.current_turn.legal_moves,
             )
             return ValidationResult.error(
                 "ILLEGAL_MOVE",
-                f"'{action.token_or_stack_id}' is not a legal move",
+                f"'{action.stack_id}' is not a legal move",
             )
 
     elif isinstance(action, CaptureChoiceAction):

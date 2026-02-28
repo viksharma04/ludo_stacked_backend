@@ -253,3 +253,11 @@ class TestLegalMoveGroup:
         group = LegalMoveGroup(stack_id="stack_1_2_3", moves=["stack_1_2_3", "stack_2_3", "stack_3"])
         assert group.stack_id == "stack_1_2_3"
         assert len(group.moves) == 3
+
+
+class TestMoveActionField:
+    def test_move_action_has_stack_id(self):
+        from app.services.game.engine.actions import MoveAction
+        action = MoveAction(stack_id="stack_1_2")
+        assert action.stack_id == "stack_1_2"
+        assert action.action_type == "move"
