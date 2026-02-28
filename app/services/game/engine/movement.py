@@ -583,6 +583,101 @@ def process_after_move(
     return ProcessResult.ok(new_state, events)
 
 
+def resume_after_capture(
+    state: GameState,
+    events: list[AnyGameEvent],
+) -> ProcessResult:
+    """Resume post-move flow after a capture choice is resolved.
+
+    Unlike process_after_move, this does NOT consume a roll (the roll
+    was already consumed by the move that triggered the collision).
+    Checks remaining rolls, extra rolls, or ends turn.
+    """
+    current_turn = state.current_turn
+    if current_turn is None:
+        return ProcessResult.failure("NO_ACTIVE_TURN", "Turn lost during capture choice")
+
+    remaining_rolls = current_turn.rolls_to_allocate
+    updated_player = next(p for p in state.players if p.player_id == current_turn.player_id)
+
+    # Check for remaining rolls — find first with legal moves
+    if remaining_rolls:
+        usable_index = None
+        legal_moves: list[str] = []
+        for i, roll in enumerate(remaining_rolls):
+            moves = get_legal_moves(updated_player, roll, state.board_setup)
+            if moves:
+                usable_index = i
+                legal_moves = moves
+                break
+
+        if usable_index is not None:
+            usable_roll = remaining_rolls[usable_index]
+            reordered = [usable_roll] + remaining_rolls[:usable_index] + remaining_rolls[usable_index + 1:]
+            legal_move_groups = get_legal_move_groups(updated_player, usable_roll, state.board_setup)
+            updated_turn = current_turn.model_copy(
+                update={
+                    "rolls_to_allocate": reordered,
+                    "legal_moves": legal_moves,
+                }
+            )
+            events.append(
+                AwaitingChoice(
+                    player_id=current_turn.player_id,
+                    legal_moves=legal_move_groups,
+                    roll_to_allocate=usable_roll,
+                )
+            )
+            new_state = state.model_copy(
+                update={
+                    "current_event": CurrentEvent.PLAYER_CHOICE,
+                    "current_turn": updated_turn,
+                }
+            )
+            return ProcessResult.ok(new_state, events)
+
+    # Check for extra rolls from captures
+    if current_turn.extra_rolls > 0:
+        events.append(RollGranted(player_id=current_turn.player_id, reason="capture_bonus"))
+        updated_turn = current_turn.model_copy(
+            update={
+                "rolls_to_allocate": [],
+                "extra_rolls": current_turn.extra_rolls - 1,
+                "legal_moves": [],
+            }
+        )
+        new_state = state.model_copy(
+            update={
+                "current_event": CurrentEvent.PLAYER_ROLL,
+                "current_turn": updated_turn,
+            }
+        )
+        return ProcessResult.ok(new_state, events)
+
+    # End turn
+    next_turn_order = get_next_turn_order(current_turn.current_turn_order, len(state.players))
+    next_player = next(p for p in state.players if p.turn_order == next_turn_order)
+
+    events.append(
+        TurnEnded(
+            player_id=current_turn.player_id,
+            reason="all_rolls_used",
+            next_player_id=next_player.player_id,
+        )
+    )
+    events.append(TurnStarted(player_id=next_player.player_id, turn_number=next_turn_order))
+    events.append(RollGranted(player_id=next_player.player_id, reason="turn_start"))
+
+    new_turn = create_new_turn(turn_order=next_turn_order, players=state.players)
+    new_state = state.model_copy(
+        update={
+            "current_event": CurrentEvent.PLAYER_ROLL,
+            "current_turn": new_turn,
+        }
+    )
+    return ProcessResult.ok(new_state, events)
+
+
 def handle_road_collision(
     state: GameState,
     moved_piece: Stack,

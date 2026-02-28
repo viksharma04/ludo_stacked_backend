@@ -423,21 +423,96 @@ def grant_extra_rolls(state: GameState, count: int = 1) -> GameState:
 
 def process_capture_choice(
     state: GameState,
-    _choice: str,
-    _player_id: UUID,
-) -> CollisionResult:
+    choice: str,
+    player_id: UUID,
+) -> "ProcessResult":
     """Process a capture choice made by the player.
 
-    Used when there are multiple capture options (e.g., multiple targets).
-
-    Args:
-        state: Current game state.
-        _choice: The player's choice ('stack', 'capture', or target ID).
-        _player_id: The player making the choice.
-
-    Returns:
-        CollisionResult with updated state.
+    Validates the choice against pending_capture targets, executes the
+    capture, grants extra rolls, clears pending state, and resumes
+    post-move flow (remaining rolls / extra rolls / turn end).
     """
-    # Placeholder for complex capture choice logic
-    # This would be used when a player has multiple options
-    return CollisionResult(state=state, events=[])
+    from .validation import ProcessResult
+
+    current_turn = state.current_turn
+    if current_turn is None or current_turn.pending_capture is None:
+        return ProcessResult.failure(
+            "NO_PENDING_CAPTURE", "No pending capture to resolve"
+        )
+
+    pending = current_turn.pending_capture
+
+    # Validate choice is among capturable targets
+    if choice not in pending.capturable_targets:
+        return ProcessResult.failure(
+            "INVALID_CAPTURE_TARGET",
+            f"'{choice}' is not a valid capture target. "
+            f"Valid targets: {pending.capturable_targets}",
+        )
+
+    # Parse "{player_id}:{stack_id}"
+    parts = choice.split(":", 1)
+    if len(parts) != 2:
+        return ProcessResult.failure(
+            "INVALID_CHOICE_FORMAT",
+            f"Choice must be in 'player_id:stack_id' format, got: {choice}",
+        )
+    target_player_id_str, target_stack_id = parts
+
+    try:
+        target_player_id = UUID(target_player_id_str)
+    except ValueError:
+        return ProcessResult.failure(
+            "INVALID_CHOICE_FORMAT",
+            f"Invalid player ID in choice: {target_player_id_str}",
+        )
+
+    # Find the target player and stack
+    target_player = next(
+        (p for p in state.players if p.player_id == target_player_id), None
+    )
+    if target_player is None:
+        return ProcessResult.failure(
+            "PLAYER_NOT_FOUND", f"Player {target_player_id} not found"
+        )
+
+    target_stack = next(
+        (s for s in target_player.stacks if s.stack_id == target_stack_id), None
+    )
+    if target_stack is None:
+        return ProcessResult.failure(
+            "STACK_NOT_FOUND", f"Stack {target_stack_id} not found"
+        )
+
+    # Find the capturing player and their moving stack
+    capturing_player = next(
+        p for p in state.players if p.player_id == player_id
+    )
+    moving_stack = next(
+        (s for s in capturing_player.stacks if s.stack_id == pending.moving_stack_id),
+        None,
+    )
+    if moving_stack is None:
+        return ProcessResult.failure(
+            "MOVING_STACK_NOT_FOUND",
+            f"Moving stack {pending.moving_stack_id} not found",
+        )
+
+    # Execute capture
+    events: list[AnyGameEvent] = []
+    collision_result = resolve_capture(
+        state, capturing_player, moving_stack, target_player, target_stack, events
+    )
+    if collision_result.state is not None:
+        state = collision_result.state
+    events.extend(collision_result.events)
+
+    # Clear pending_capture
+    updated_turn = state.current_turn.model_copy(
+        update={"pending_capture": None}
+    )
+    state = state.model_copy(update={"current_turn": updated_turn})
+
+    # Resume post-move flow
+    from .movement import resume_after_capture
+    return resume_after_capture(state, events)

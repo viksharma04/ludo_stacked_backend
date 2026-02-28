@@ -28,6 +28,7 @@ from app.schemas.game_engine import (
     CurrentEvent,
     GamePhase,
     GameState,
+    PendingCapture,
     Player,
     Stack,
     StackState,
@@ -67,6 +68,7 @@ def make_four_player_game(
     legal_moves=None,
     current_event=CurrentEvent.PLAYER_CHOICE,
     extra_rolls=0,
+    pending_capture=None,
 ):
     """Build a four-player GameState with customizable stacks and turn info."""
     player1 = create_player(PLAYER_1_ID, "Player 1", "red", 1, 0, stacks=p1_stacks)
@@ -80,6 +82,7 @@ def make_four_player_game(
         legal_moves=legal_moves or [],
         current_turn_order=1,
         extra_rolls=extra_rolls,
+        pending_capture=pending_capture,
     )
     return GameState(
         phase=GamePhase.IN_PROGRESS,
@@ -276,6 +279,15 @@ class TestCaptureChoiceResolution:
         # Using format: "{player_id}:stack_1"
         target_choice = f"{PLAYER_2_ID}:stack_1"
 
+        pending = PendingCapture(
+            moving_stack_id="stack_1",
+            position=5,
+            capturable_targets=[
+                f"{PLAYER_2_ID}:stack_1",
+                f"{PLAYER_3_ID}:stack_1",
+            ],
+        )
+
         state = make_four_player_game(
             p1_stacks=p1_stacks,
             p2_stacks=p2_stacks,
@@ -286,6 +298,7 @@ class TestCaptureChoiceResolution:
             legal_moves=[],
             current_event=CurrentEvent.CAPTURE_CHOICE,
             extra_rolls=0,
+            pending_capture=pending,
         )
 
         result = process_action(
@@ -341,6 +354,12 @@ class TestCaptureChoiceValidation:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
 
+        pending = PendingCapture(
+            moving_stack_id="stack_1",
+            position=5,
+            capturable_targets=[f"{PLAYER_2_ID}:stack_1"],
+        )
+
         state = make_four_player_game(
             p1_stacks=p1_stacks,
             p2_stacks=p2_stacks,
@@ -351,6 +370,7 @@ class TestCaptureChoiceValidation:
             legal_moves=[],
             current_event=CurrentEvent.CAPTURE_CHOICE,
             extra_rolls=0,
+            pending_capture=pending,
         )
 
         # Send an invalid choice that doesn't correspond to any target
@@ -503,6 +523,15 @@ class TestCaptureChoiceGrantsExtraRolls:
 
         target_choice = f"{PLAYER_2_ID}:stack_1"
 
+        pending = PendingCapture(
+            moving_stack_id="stack_1",
+            position=5,
+            capturable_targets=[
+                f"{PLAYER_2_ID}:stack_1",
+                f"{PLAYER_3_ID}:stack_1",
+            ],
+        )
+
         state = make_four_player_game(
             p1_stacks=p1_stacks,
             p2_stacks=p2_stacks,
@@ -513,6 +542,7 @@ class TestCaptureChoiceGrantsExtraRolls:
             legal_moves=[],
             current_event=CurrentEvent.CAPTURE_CHOICE,
             extra_rolls=0,
+            pending_capture=pending,
         )
 
         result = process_action(
@@ -569,6 +599,15 @@ class TestCaptureChoiceGrantsExtraRolls:
 
         target_choice = f"{PLAYER_2_ID}:stack_1_2"
 
+        pending = PendingCapture(
+            moving_stack_id="stack_1_2",
+            position=5,
+            capturable_targets=[
+                f"{PLAYER_2_ID}:stack_1_2",
+                f"{PLAYER_3_ID}:stack_1",
+            ],
+        )
+
         state = make_four_player_game(
             p1_stacks=p1_stacks,
             p2_stacks=p2_stacks,
@@ -579,6 +618,7 @@ class TestCaptureChoiceGrantsExtraRolls:
             legal_moves=[],
             current_event=CurrentEvent.CAPTURE_CHOICE,
             extra_rolls=0,
+            pending_capture=pending,
         )
 
         result = process_action(
