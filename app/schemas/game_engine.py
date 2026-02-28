@@ -68,6 +68,13 @@ class Player(PlayerAttributes):
     abs_starting_index: int
 
 
+class PendingCapture(BaseModel):
+    """Context stored when a move triggers a multi-target capture choice."""
+    moving_stack_id: str
+    position: int
+    capturable_targets: list[str]  # "{player_id}:{stack_id}" format
+
+
 class Turn(BaseModel):
     player_id: UUID
     initial_roll: bool = True
@@ -75,6 +82,7 @@ class Turn(BaseModel):
     legal_moves: list[str] = Field(default_factory=list)
     current_turn_order: int
     extra_rolls: int = 0
+    pending_capture: PendingCapture | None = None
 
 
 # Game state for broadcasting and game flow
