@@ -7,8 +7,8 @@ from app.schemas.game_engine import (
     GameSettings,
     GameState,
     Player,
-    Token,
-    TokenState,
+    Stack,
+    StackState,
 )
 
 
@@ -59,21 +59,16 @@ def _create_board_setup(game_settings: GameSettings) -> BoardSetup:
     )
 
 
-def _create_initial_tokens(player_id: UUID) -> list[Token]:
-    """Create initial tokens for a player."""
+def _create_initial_stacks() -> list[Stack]:
+    """Create initial stacks for a player."""
     return [
-        Token(
-            token_id=f"{player_id}_token_{i + 1}",
-            state=TokenState.HELL,
-            progress=0,
-            in_stack=False,
-        )
-        for i in range(4)
+        Stack(stack_id=f"stack_{i}", state=StackState.HELL, height=1, progress=0)
+        for i in range(1, 5)
     ]
 
 
 def _initialize_players(game_settings: GameSettings, starting_positions: list[int]) -> list[Player]:
-    """Initialize players with randomized turn order."""
+    """Initialize players with deterministic turn order."""
     shuffled_attributes = list(game_settings.player_attributes)
     # random.shuffle(shuffled_attributes)
 
@@ -85,7 +80,7 @@ def _initialize_players(game_settings: GameSettings, starting_positions: list[in
             color=player_attr.color,
             turn_order=index + 1,
             abs_starting_index=starting_positions[index],
-            tokens=_create_initial_tokens(player_attr.player_id),
+            stacks=_create_initial_stacks(),
         )
         players.append(player)
 
@@ -117,7 +112,6 @@ def initialize_game(game_settings: GameSettings) -> GameState:
         current_event=CurrentEvent.PLAYER_ROLL,
         board_setup=board_setup,
         current_turn=None,
-        stacks=None,
     )
 
     # def _get_current_game_state(self, state_type: GameState) -> dict[str, Any]:

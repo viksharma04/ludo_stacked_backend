@@ -326,3 +326,45 @@ class TestGetLegalMoveGroups:
         assert "stack_3" in stack_group.moves
         hell_group = next(g for g in groups if g.stack_id == "stack_4")
         assert hell_group.moves == ["stack_4"]
+
+
+# ---------------------------------------------------------------------------
+# Load start_game module directly (avoiding broken __init__.py import chain).
+# ---------------------------------------------------------------------------
+if "app.services.game" not in sys.modules:
+    _game_pkg = _types.ModuleType("app.services.game")
+    _game_pkg.__path__ = ["app/services/game"]
+    _game_pkg.__package__ = "app.services.game"
+    sys.modules["app.services.game"] = _game_pkg
+
+if "app.services.game.start_game" not in sys.modules:
+    _start_spec = importlib.util.spec_from_file_location(
+        "app.services.game.start_game",
+        "app/services/game/start_game.py",
+    )
+    _start_mod = importlib.util.module_from_spec(_start_spec)
+    sys.modules[_start_spec.name] = _start_mod
+    _start_spec.loader.exec_module(_start_mod)
+
+
+class TestInitializeGame:
+    def test_players_have_four_stacks_in_hell(self):
+        from app.schemas.game_engine import GameSettings, PlayerAttributes, StackState
+        from app.services.game.start_game import initialize_game
+        settings = GameSettings(
+            num_players=2,
+            player_attributes=[
+                PlayerAttributes(player_id=PLAYER_ID, name="P1", color="red"),
+                PlayerAttributes(player_id=UUID("00000000-0000-0000-0000-000000000002"), name="P2", color="blue"),
+            ],
+            grid_length=7,
+        )
+        state = initialize_game(settings)
+        for player in state.players:
+            assert len(player.stacks) == 4
+            for stack in player.stacks:
+                assert stack.state == StackState.HELL
+                assert stack.height == 1
+                assert stack.progress == 0
+            stack_ids = sorted(s.stack_id for s in player.stacks)
+            assert stack_ids == ["stack_1", "stack_2", "stack_3", "stack_4"]
