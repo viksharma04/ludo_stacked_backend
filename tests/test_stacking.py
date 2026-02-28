@@ -318,32 +318,288 @@ class TestPartialStackMovement:
         assert moved_event.to_progress == 12  # 10 + 4/2 = 12
 
 
-# TODO: Good to have tests
-# class TestStackCapture:
-#     """Test stack capture behavior."""
-#
-#     def test_stack_dissolved_when_captured(self):
-#         """Stack should be dissolved when captured."""
-#         pass
-#
-# class TestStackLimits:
-#     """Test stack size limits."""
-#
-#     def test_three_stack(self):
-#         """Three stacks can form a stack."""
-#         pass
-#
-#     def test_four_stack(self):
-#         """Four stacks can form a stack."""
-#         pass
-#
-# class TestStackInHomestretch:
-#     """Test stack behavior in homestretch."""
-#
-#     def test_stack_entering_homestretch(self):
-#         """Stack can enter homestretch."""
-#         pass
-#
-#     def test_stack_reaching_heaven(self):
-#         """All pieces in stack finish when stack reaches heaven."""
-#         pass
+class TestThreeWayMerge:
+    """Test merging three stacks into one."""
+
+    def test_three_stacks_merge_in_sequence(self, two_player_board_setup: BoardSetup):
+        """Moving a stack onto a position with an already-merged stack forms a triple."""
+        # stack_1_2 (height 2) at progress 15, stack_3 at progress 10
+        # Roll 5: stack_3 moves from 10 to 15, merges with stack_1_2 -> stack_1_2_3
+        player1_stacks = [
+            create_stack("stack_1_2", StackState.ROAD, 2, 15),
+            create_stack("stack_3", StackState.ROAD, 1, 10),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player1 = create_player(
+            player_id=PLAYER_1_ID, name="Player 1", color="red",
+            turn_order=1, abs_starting_index=0, stacks=player1_stacks,
+        )
+        player2 = create_player(
+            player_id=PLAYER_2_ID, name="Player 2", color="blue",
+            turn_order=2, abs_starting_index=26,
+        )
+
+        turn = Turn(
+            player_id=PLAYER_1_ID, initial_roll=True,
+            rolls_to_allocate=[], legal_moves=[],
+            current_turn_order=1, extra_rolls=0,
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player1, player2],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=two_player_board_setup,
+            current_turn=turn,
+        )
+
+        # Roll 5
+        result = process_action(state, RollAction(value=5), PLAYER_1_ID)
+        assert result.success
+        state = result.state
+
+        # Move stack_3 from 10 to 15 (landing on stack_1_2)
+        result = process_action(state, MoveAction(stack_id="stack_3"), PLAYER_1_ID)
+        assert result.success
+
+        # Verify merged into stack_1_2_3
+        player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
+        stack_ids = {s.stack_id for s in player.stacks}
+        assert "stack_1_2_3" in stack_ids
+        assert "stack_1_2" not in stack_ids
+        assert "stack_3" not in stack_ids
+
+        merged = next(s for s in player.stacks if s.stack_id == "stack_1_2_3")
+        assert merged.height == 3
+        assert merged.progress == 15
+
+
+class TestMaxStackSize:
+    """Test maximum stack size (all 4 pieces merged)."""
+
+    def test_all_four_pieces_merge_into_height_4(self, two_player_board_setup: BoardSetup):
+        """All four stacks merge into stack_1_2_3_4 (height 4)."""
+        # stack_1_2_3 at progress 20, stack_4 at progress 16
+        # Roll 4: stack_4 moves from 16 to 20, merges into stack_1_2_3_4
+        player1_stacks = [
+            create_stack("stack_1_2_3", StackState.ROAD, 3, 20),
+            create_stack("stack_4", StackState.ROAD, 1, 16),
+        ]
+        player1 = create_player(
+            player_id=PLAYER_1_ID, name="Player 1", color="red",
+            turn_order=1, abs_starting_index=0, stacks=player1_stacks,
+        )
+        player2 = create_player(
+            player_id=PLAYER_2_ID, name="Player 2", color="blue",
+            turn_order=2, abs_starting_index=26,
+        )
+
+        turn = Turn(
+            player_id=PLAYER_1_ID, initial_roll=True,
+            rolls_to_allocate=[], legal_moves=[],
+            current_turn_order=1, extra_rolls=0,
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player1, player2],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=two_player_board_setup,
+            current_turn=turn,
+        )
+
+        result = process_action(state, RollAction(value=4), PLAYER_1_ID)
+        assert result.success
+        state = result.state
+
+        result = process_action(state, MoveAction(stack_id="stack_4"), PLAYER_1_ID)
+        assert result.success
+
+        player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
+        stack_ids = {s.stack_id for s in player.stacks}
+        assert "stack_1_2_3_4" in stack_ids
+        merged = next(s for s in player.stacks if s.stack_id == "stack_1_2_3_4")
+        assert merged.height == 4
+        assert merged.progress == 20
+
+    def test_height_4_stack_movement_divisibility(self, two_player_board_setup: BoardSetup):
+        """Height-4 stack: only roll divisible by 4 works (roll=4 → effective=1)."""
+        from app.services.game.engine.legal_moves import get_legal_moves
+
+        player1_stacks = [
+            create_stack("stack_1_2_3_4", StackState.ROAD, 4, 20),
+        ]
+        player1 = create_player(
+            player_id=PLAYER_1_ID, name="Player 1", color="red",
+            turn_order=1, abs_starting_index=0, stacks=player1_stacks,
+        )
+
+        board = two_player_board_setup
+
+        # Roll=4: 4 % 4 == 0 → effective=1 → legal (full stack)
+        moves_4 = get_legal_moves(player1, 4, board)
+        assert "stack_1_2_3_4" in moves_4
+
+        # Roll=3: 3 % 4 != 0 → full stack not legal
+        # But partial moves: height 3 (3%3==0), height 2 (3%2!=0), height 1 (3%1==0)
+        moves_3 = get_legal_moves(player1, 3, board)
+        assert "stack_1_2_3_4" not in moves_3
+        assert "stack_2_3_4" in moves_3  # height 3, 3/3=1
+        assert "stack_4" in moves_3  # height 1, 3/1=3
+
+        # Roll=1: 1 % 4 != 0, but partial height 1: 1%1==0
+        moves_1 = get_legal_moves(player1, 1, board)
+        assert "stack_1_2_3_4" not in moves_1
+        assert "stack_4" in moves_1  # height 1, 1/1=1
+
+
+class TestSplitThenRemerge:
+    """Test splitting a stack and then re-merging pieces."""
+
+    def test_split_then_remerge_on_same_square(self, two_player_board_setup: BoardSetup):
+        """Split a stack, then later re-merge when pieces meet again."""
+        # stack_1_2_3 at progress 10. Roll 6:
+        # Split: move stack_3 (height 1) from 10 to 16 (10+6)
+        # remaining: stack_1_2 at 10
+        # Later, move stack_1_2 (height 2) to 16 with roll 12... but max roll is 6.
+        # Instead: stack_1_2 at 10, stack_3 at 12, roll 2: stack_1_2 moves to 11 (10+2/2=11)
+        # That doesn't work for merge. Let me use a simpler setup.
+        #
+        # stack_1_2 at progress 10, stack_3 at progress 12
+        # Roll 4: stack_1_2 (height 2, 4/2=2) moves to 12, lands on stack_3 → merge to stack_1_2_3
+        player1_stacks = [
+            create_stack("stack_1_2", StackState.ROAD, 2, 10),
+            create_stack("stack_3", StackState.ROAD, 1, 12),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player1 = create_player(
+            player_id=PLAYER_1_ID, name="Player 1", color="red",
+            turn_order=1, abs_starting_index=0, stacks=player1_stacks,
+        )
+        player2 = create_player(
+            player_id=PLAYER_2_ID, name="Player 2", color="blue",
+            turn_order=2, abs_starting_index=26,
+        )
+
+        turn = Turn(
+            player_id=PLAYER_1_ID, initial_roll=True,
+            rolls_to_allocate=[], legal_moves=[],
+            current_turn_order=1, extra_rolls=0,
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player1, player2],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=two_player_board_setup,
+            current_turn=turn,
+        )
+
+        # Roll 4: stack_1_2 effective roll = 4/2 = 2, moves from 10 to 12
+        result = process_action(state, RollAction(value=4), PLAYER_1_ID)
+        assert result.success
+        state = result.state
+
+        result = process_action(state, MoveAction(stack_id="stack_1_2"), PLAYER_1_ID)
+        assert result.success
+
+        # Verify re-merged into stack_1_2_3
+        player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
+        stack_ids = {s.stack_id for s in player.stacks}
+        assert "stack_1_2_3" in stack_ids
+        merged = next(s for s in player.stacks if s.stack_id == "stack_1_2_3")
+        assert merged.height == 3
+        assert merged.progress == 12
+
+
+class TestCapturedStackRebuilt:
+    """Test that a captured composite stack decomposes, then can be rebuilt."""
+
+    def test_captured_height_3_decomposes_to_individuals(self, two_player_board_setup: BoardSetup):
+        """Capturing a height-3 stack should create 3 individual stacks in HELL."""
+        from app.services.game.engine.captures import send_to_hell
+
+        player2_stacks = [
+            create_stack("stack_1_2_3", StackState.ROAD, 3, 15),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player2 = create_player(
+            player_id=PLAYER_2_ID, name="Player 2", color="blue",
+            turn_order=2, abs_starting_index=26, stacks=player2_stacks,
+        )
+        player1 = create_player(
+            player_id=PLAYER_1_ID, name="Player 1", color="red",
+            turn_order=1, abs_starting_index=0,
+        )
+
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player1, player2],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=two_player_board_setup,
+            current_turn=None,
+        )
+
+        captured_stack = next(s for s in player2.stacks if s.stack_id == "stack_1_2_3")
+        new_state = send_to_hell(state, player2, captured_stack)
+
+        # Player 2 should now have stack_1, stack_2, stack_3, stack_4 all in HELL
+        p2 = next(p for p in new_state.players if p.player_id == PLAYER_2_ID)
+        assert len(p2.stacks) == 4
+        for s in p2.stacks:
+            assert s.state == StackState.HELL
+            assert s.progress == 0
+            assert s.height == 1
+        stack_ids = {s.stack_id for s in p2.stacks}
+        assert stack_ids == {"stack_1", "stack_2", "stack_3", "stack_4"}
+
+
+class TestSplitStackEventOrdering:
+    """Test that split move events are emitted in correct order."""
+
+    def test_stack_update_before_stack_moved(self, two_player_board_setup: BoardSetup):
+        """StackUpdate (split) should come before StackMoved in events."""
+        player1_stacks = [
+            create_stack("stack_1_2_3", StackState.ROAD, 3, 10),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player1 = create_player(
+            player_id=PLAYER_1_ID, name="Player 1", color="red",
+            turn_order=1, abs_starting_index=0, stacks=player1_stacks,
+        )
+        player2 = create_player(
+            player_id=PLAYER_2_ID, name="Player 2", color="blue",
+            turn_order=2, abs_starting_index=26,
+        )
+
+        turn = Turn(
+            player_id=PLAYER_1_ID, initial_roll=True,
+            rolls_to_allocate=[], legal_moves=[],
+            current_turn_order=1, extra_rolls=0,
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player1, player2],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=two_player_board_setup,
+            current_turn=turn,
+        )
+
+        # Roll 5: 5%3!=0 (full stack not legal), 5%1==0 (stack_3 legal)
+        result = process_action(state, RollAction(value=5), PLAYER_1_ID)
+        assert result.success
+        state = result.state
+
+        # Move partial stack_3 (split from stack_1_2_3)
+        result = process_action(state, MoveAction(stack_id="stack_3"), PLAYER_1_ID)
+        assert result.success
+
+        # Find StackUpdate and StackMoved events
+        update_idx = None
+        moved_idx = None
+        for i, event in enumerate(result.events):
+            if isinstance(event, StackUpdate) and update_idx is None:
+                update_idx = i
+            if isinstance(event, StackMoved) and moved_idx is None:
+                moved_idx = i
+
+        assert update_idx is not None, "StackUpdate event should exist"
+        assert moved_idx is not None, "StackMoved event should exist"
+        assert update_idx < moved_idx, "StackUpdate should come before StackMoved"

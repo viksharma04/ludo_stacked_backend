@@ -24,24 +24,37 @@ PLAYER_4_ID = UUID("00000000-0000-0000-0000-000000000004")
 
 @pytest.fixture
 def standard_board_setup() -> BoardSetup:
-    """Standard 4-player board setup."""
+    """Standard 4-player board setup (grid_length=6).
+
+    Formulas (g=grid_length):
+    - step = 2g+1 = 13
+    - starting_positions = [0, 13, 26, 39]
+    - squares_to_homestretch = 8g+2 = 50
+    - squares_to_win = 9g+1 = 55
+    - safe_offset = 2g-2 = 10 from each starting position
+    - Board is always complete (all 4 starting positions, all 8 safe spaces)
+    """
     return BoardSetup(
-        squares_to_win=57,
-        squares_to_homestretch=52,
+        squares_to_win=55,
+        squares_to_homestretch=50,
         starting_positions=[0, 13, 26, 39],
-        safe_spaces=[0, 13, 26, 39, 8, 21, 34, 47],
+        safe_spaces=[0, 10, 13, 23, 26, 36, 39, 49],
         get_out_rolls=[6],
     )
 
 
 @pytest.fixture
 def two_player_board_setup() -> BoardSetup:
-    """Two-player board setup."""
+    """Two-player board setup (grid_length=6).
+
+    Board geometry is identical to 4-player — all safe spaces present.
+    Players placed on opposite corners (1st and 3rd starting positions).
+    """
     return BoardSetup(
-        squares_to_win=57,
-        squares_to_homestretch=52,
+        squares_to_win=55,
+        squares_to_homestretch=50,
         starting_positions=[0, 26],
-        safe_spaces=[0, 26],
+        safe_spaces=[0, 10, 13, 23, 26, 36, 39, 49],
         get_out_rolls=[6],
     )
 

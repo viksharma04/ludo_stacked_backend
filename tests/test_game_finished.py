@@ -37,9 +37,9 @@ class TestStackReachingHeaven:
 
     def test_stack_reaches_heaven_with_exact_roll(self, two_player_board_setup: BoardSetup):
         """Stack should reach HEAVEN with exact roll to squares_to_win."""
-        # Player 1 with stack at progress 55 (needs exactly 2 to win at 57)
+        # Player 1 with stack at progress 53 (needs exactly 2 to win at 55)
         player1_stacks = [
-            create_stack("stack_1", StackState.HOMESTRETCH, 1, 55),
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 53),
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -102,13 +102,13 @@ class TestStackReachingHeaven:
         player1 = next(p for p in new_state.players if p.player_id == PLAYER_1_ID)
         stack = next(s for s in player1.stacks if s.stack_id == "stack_1")
         assert stack.state == StackState.HEAVEN
-        assert stack.progress == 57  # squares_to_win
+        assert stack.progress == 55  # squares_to_win
 
     def test_cannot_overshoot_heaven(self, two_player_board_setup: BoardSetup):
         """Stack cannot move if roll would exceed squares_to_win."""
-        # Player 1 with stack at progress 55 (needs exactly 2 to win at 57)
+        # Player 1 with stack at progress 53 (needs exactly 2 to win at 55)
         player1_stacks = [
-            create_stack("stack_1", StackState.HOMESTRETCH, 1, 55),
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 53),
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -145,7 +145,7 @@ class TestStackReachingHeaven:
             current_turn=turn,
         )
 
-        # Roll a 5 (would overshoot 57)
+        # Roll a 5 (would overshoot 55)
         result = process_action(state, RollAction(value=5), PLAYER_1_ID)
         assert result.success
 
@@ -155,9 +155,9 @@ class TestStackReachingHeaven:
 
     def test_stack_in_homestretch_state(self, two_player_board_setup: BoardSetup):
         """Stack should transition to HOMESTRETCH state when entering final stretch."""
-        # Player 1 with stack at progress 50 (enters homestretch at 52)
+        # Player 1 with stack at progress 48 (enters homestretch at 50)
         player1_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 50),
+            create_stack("stack_1", StackState.ROAD, 1, 48),
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -194,7 +194,7 @@ class TestStackReachingHeaven:
             current_turn=turn,
         )
 
-        # Roll 3 (50 + 3 = 53, enters homestretch at 52)
+        # Roll 3 (48 + 3 = 51, enters homestretch at 50)
         result = process_action(state, RollAction(value=3), PLAYER_1_ID)
         assert result.success
         state = result.state
@@ -208,7 +208,7 @@ class TestStackReachingHeaven:
         player1 = next(p for p in new_state.players if p.player_id == PLAYER_1_ID)
         stack = next(s for s in player1.stacks if s.stack_id == "stack_1")
         assert stack.state == StackState.HOMESTRETCH
-        assert stack.progress == 53
+        assert stack.progress == 51
 
 
 class TestAllStacksInHeaven:
@@ -218,10 +218,10 @@ class TestAllStacksInHeaven:
         """When last stack reaches heaven, appropriate events should fire."""
         # Player 1 with 3 stacks in heaven, 1 about to finish
         player1_stacks = [
-            create_stack("stack_1", StackState.HOMESTRETCH, 1, 55),  # Needs 2
-            create_stack("stack_2", StackState.HEAVEN, 1, 57),
-            create_stack("stack_3", StackState.HEAVEN, 1, 57),
-            create_stack("stack_4", StackState.HEAVEN, 1, 57),
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 53),  # Needs 2
+            create_stack("stack_2", StackState.HEAVEN, 1, 55),
+            create_stack("stack_3", StackState.HEAVEN, 1, 55),
+            create_stack("stack_4", StackState.HEAVEN, 1, 55),
         ]
         player1 = create_player(
             player_id=PLAYER_1_ID,
