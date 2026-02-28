@@ -119,7 +119,7 @@ class RollGranted(GameEvent):
     Emitted whenever the game expects a player to roll:
     - At the start of their turn
     - After rolling a 6 (extra roll)
-    - After capturing opponent tokens (bonus roll)
+    - After capturing opponent stacks (bonus roll)
     """
 
     event_type: Literal["roll_granted"] = "roll_granted"

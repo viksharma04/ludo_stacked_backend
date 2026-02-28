@@ -5,25 +5,6 @@ This module provides the core game engine with:
 - Event types for WebSocket broadcasts
 - ProcessResult pattern for error handling
 - Modular processing logic
-
-Usage:
-    from app.services.game.engine import (
-        process_action,
-        ProcessResult,
-        GameAction,
-        RollAction,
-        MoveAction,
-    )
-
-    # Process an action
-    result = process_action(state, RollAction(value=6), player_id)
-
-    if result.success:
-        new_state = result.state
-        events = result.events  # Broadcast these via WebSocket
-    else:
-        # Handle error
-        print(f"Error: {result.error_code} - {result.error_message}")
 """
 
 # Actions - explicit user inputs
@@ -45,21 +26,18 @@ from .events import (
     GameEnded,
     GameEvent,
     GameStarted,
-    StackDissolved,
-    StackFormed,
+    StackCaptured,
+    StackExitedHell,
     StackMoved,
-    StackSplit,
+    StackReachedHeaven,
+    StackUpdate,
     ThreeSixesPenalty,
-    TokenCaptured,
-    TokenExitedHell,
-    TokenMoved,
-    TokenReachedHeaven,
     TurnEnded,
     TurnStarted,
 )
 
 # Legal moves
-from .legal_moves import get_legal_moves, has_any_legal_moves
+from .legal_moves import get_legal_move_groups, get_legal_moves, has_any_legal_moves
 
 # Main processing
 from .process import check_win_condition, process_action
@@ -81,14 +59,11 @@ __all__ = [
     "GameStarted",
     "DiceRolled",
     "ThreeSixesPenalty",
-    "TokenMoved",
-    "TokenExitedHell",
-    "TokenReachedHeaven",
-    "TokenCaptured",
-    "StackFormed",
-    "StackDissolved",
     "StackMoved",
-    "StackSplit",
+    "StackExitedHell",
+    "StackReachedHeaven",
+    "StackCaptured",
+    "StackUpdate",
     "TurnStarted",
     "TurnEnded",
     "AwaitingChoice",
@@ -103,5 +78,6 @@ __all__ = [
     "validate_action",
     # Legal moves
     "get_legal_moves",
+    "get_legal_move_groups",
     "has_any_legal_moves",
 ]
