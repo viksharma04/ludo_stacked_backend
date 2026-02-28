@@ -112,3 +112,144 @@ class TestFindParentStack:
         player = _make_player([stack])
         result = find_parent_stack(player, "stack_3_4")
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Integration tests for captures.py functions that use stack_utils
+# ---------------------------------------------------------------------------
+# Load captures module directly (avoiding broken __init__.py import chain).
+# We need to pre-register the engine package and its sub-modules so that
+# relative imports inside captures.py resolve without triggering __init__.py.
+import types as _types
+
+if "app.services.game.engine" not in sys.modules:
+    _pkg = _types.ModuleType("app.services.game.engine")
+    _pkg.__path__ = ["app/services/game/engine"]
+    _pkg.__package__ = "app.services.game.engine"
+    sys.modules["app.services.game.engine"] = _pkg
+
+# events.py (imported by captures.py via relative import)
+if "app.services.game.engine.events" not in sys.modules:
+    _events_spec = importlib.util.spec_from_file_location(
+        "app.services.game.engine.events",
+        "app/services/game/engine/events.py",
+    )
+    _events_mod = importlib.util.module_from_spec(_events_spec)
+    sys.modules[_events_spec.name] = _events_mod
+    _events_spec.loader.exec_module(_events_mod)
+
+# captures.py
+_captures_spec = importlib.util.spec_from_file_location(
+    "app.services.game.engine.captures",
+    "app/services/game/engine/captures.py",
+)
+_captures_mod = importlib.util.module_from_spec(_captures_spec)
+sys.modules[_captures_spec.name] = _captures_mod
+_captures_spec.loader.exec_module(_captures_mod)
+
+resolve_stacking = _captures_mod.resolve_stacking
+send_to_hell = _captures_mod.send_to_hell
+
+from app.schemas.game_engine import (
+    BoardSetup,
+    CurrentEvent,
+    GamePhase,
+    GameState,
+    Turn,
+)
+
+PLAYER_2_ID = UUID("00000000-0000-0000-0000-000000000002")
+
+
+def _make_game_state(players: list[Player]) -> GameState:
+    """Helper to create a minimal GameState for integration tests."""
+    board_setup = BoardSetup(
+        squares_to_win=57,
+        squares_to_homestretch=52,
+        starting_positions=[0, 13, 26, 39],
+        safe_spaces=[0, 13, 26, 39],
+        get_out_rolls=[6],
+    )
+    turn = Turn(
+        player_id=players[0].player_id,
+        initial_roll=True,
+        rolls_to_allocate=[],
+        legal_moves=[],
+        current_turn_order=1,
+        extra_rolls=0,
+    )
+    return GameState(
+        phase=GamePhase.IN_PROGRESS,
+        players=players,
+        current_event=CurrentEvent.PLAYER_ROLL,
+        board_setup=board_setup,
+        current_turn=turn,
+    )
+
+
+class TestResolveStackingIntegration:
+    """Integration tests for resolve_stacking using stack_utils-based IDs."""
+
+    def test_merge_produces_sorted_id(self):
+        """Merging stack_3 and stack_1 should produce stack_1_3 (sorted ascending)."""
+        stack_3 = Stack(stack_id="stack_3", state=StackState.ROAD, height=1, progress=10)
+        stack_1 = Stack(stack_id="stack_1", state=StackState.ROAD, height=1, progress=10)
+        player = _make_player([stack_3, stack_1])
+        state = _make_game_state([player])
+
+        result = resolve_stacking(state, player, stack_3, stack_1)
+
+        assert result.state is not None
+        updated_player = next(
+            p for p in result.state.players if p.player_id == PLAYER_ID
+        )
+        # Should have exactly one merged stack
+        assert len(updated_player.stacks) == 1
+        merged = updated_player.stacks[0]
+        assert merged.stack_id == "stack_1_3"
+        assert merged.height == 2
+
+
+class TestSendToHellIntegration:
+    """Integration tests for send_to_hell using stack_utils-based decomposition."""
+
+    def test_decompose_composite_stack(self):
+        """Capturing stack_1_2_3 should decompose into stack_1, stack_2, stack_3 in HELL."""
+        composite = Stack(
+            stack_id="stack_1_2_3", state=StackState.ROAD, height=3, progress=10
+        )
+        existing_hell = Stack(
+            stack_id="stack_4", state=StackState.HELL, height=1, progress=0
+        )
+        player = _make_player([composite, existing_hell])
+        state = _make_game_state([player])
+
+        updated_state = send_to_hell(state, player, composite)
+
+        updated_player = next(
+            p for p in updated_state.players if p.player_id == PLAYER_ID
+        )
+        stacks_by_id = {s.stack_id: s for s in updated_player.stacks}
+
+        # Should have 4 stacks: stack_1, stack_2, stack_3 (decomposed) + stack_4 (unchanged)
+        assert len(stacks_by_id) == 4
+        assert set(stacks_by_id.keys()) == {"stack_1", "stack_2", "stack_3", "stack_4"}
+
+        # Decomposed stacks should be in HELL with height=1, progress=0
+        for c in [1, 2, 3]:
+            s = stacks_by_id[f"stack_{c}"]
+            assert s.state == StackState.HELL
+            assert s.height == 1
+            assert s.progress == 0
+
+        # Existing stack_4 should be unchanged
+        assert stacks_by_id["stack_4"].state == StackState.HELL
+        assert stacks_by_id["stack_4"].progress == 0
+
+
+class TestLegalMoveGroup:
+    def test_legal_move_group_creation(self):
+        from app.schemas.game_engine import LegalMoveGroup
+        group = LegalMoveGroup(stack_id="stack_1_2_3", moves=["stack_1_2_3", "stack_2_3", "stack_3"])
+        assert group.stack_id == "stack_1_2_3"
+        assert len(group.moves) == 3

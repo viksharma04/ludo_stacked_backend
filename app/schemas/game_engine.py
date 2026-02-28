@@ -1,7 +1,7 @@
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # Game phases
@@ -11,8 +11,8 @@ class GamePhase(str, Enum):
     FINISHED = "finished"
 
 
-# Token states
-class TokenState(str, Enum):
+# Stack states
+class StackState(str, Enum):
     HELL = "hell"
     ROAD = "road"
     HOMESTRETCH = "homestretch"
@@ -38,7 +38,7 @@ class GameSettings(BaseModel):
     num_players: int
     player_attributes: list[PlayerAttributes]
     grid_length: int
-    get_out_rolls: list[int] = [6]
+    get_out_rolls: list[int] = Field(default_factory=lambda: [6])
 
 
 # Defined at game start
@@ -47,40 +47,34 @@ class BoardSetup(BaseModel):
     squares_to_homestretch: int
     starting_positions: list[int]
     safe_spaces: list[int]
-    get_out_rolls: list[int]
-
-
-class Token(BaseModel):
-    token_id: str
-    state: TokenState
-    progress: int
-    in_stack: bool = False
+    get_out_rolls: list[int] = Field(default_factory=lambda: [6])
 
 
 class Stack(BaseModel):
     stack_id: str
-    tokens: list[str]
+    state: StackState
+    height: int = 1
+    progress: int
+
+
+class LegalMoveGroup(BaseModel):
+    stack_id: str
+    moves: list[str]
 
 
 class Player(PlayerAttributes):
-    tokens: list[Token]
+    stacks: list[Stack]
     turn_order: int
     abs_starting_index: int
-    stacks: list[Stack] | None = None
 
 
 class Turn(BaseModel):
     player_id: UUID
     initial_roll: bool = True
-    rolls_to_allocate: list[int] = []
-    legal_moves: list[str] = []
+    rolls_to_allocate: list[int] = Field(default_factory=list)
+    legal_moves: list[str] = Field(default_factory=list)
     current_turn_order: int
     extra_rolls: int = 0
-
-
-class Move(BaseModel):
-    roll: int
-    token_id: str
 
 
 # Game state for broadcasting and game flow
@@ -96,13 +90,4 @@ class GameState(BaseModel):
     current_event: CurrentEvent
     board_setup: BoardSetup
     current_turn: Turn | None = None
-    stacks: list[Stack] | None = None
     event_seq: int = 0  # Next sequence number for events (monotonically increasing)
-    next_stack_id: int = 1  # Next stack ID counter (monotonically increasing)
-
-
-# Action log for recording player actions
-class ActionLog(BaseModel):
-    player_id: UUID
-    roll: int
-    token_id: str  # Or stack_id based on context
