@@ -21,7 +21,7 @@ from .events import (
     TurnEnded,
     TurnStarted,
 )
-from .legal_moves import get_legal_moves
+from .legal_moves import get_legal_moves, get_legal_move_groups
 from .validation import ProcessResult
 
 
@@ -181,12 +181,13 @@ def process_roll(state: GameState, roll_value: int, player_id: UUID) -> ProcessR
     )
 
     if legal_moves:
-        # Transition to player choice
+        # Build grouped format for frontend
+        legal_move_groups = get_legal_move_groups(current_player, new_rolls[0], state.board_setup)
         updated_turn = updated_turn.model_copy(update={"legal_moves": legal_moves})
         events.append(
             AwaitingChoice(
                 player_id=player_id,
-                legal_moves=legal_moves,
+                legal_moves=legal_move_groups,
                 roll_to_allocate=new_rolls[0],
             )
         )

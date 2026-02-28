@@ -12,7 +12,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.schemas.game_engine import TokenState
+from app.schemas.game_engine import LegalMoveGroup, Stack, StackState
 
 
 class GameEvent(BaseModel):
@@ -26,9 +26,7 @@ class GameStarted(GameEvent):
     """Game has transitioned from NOT_STARTED to IN_PROGRESS."""
 
     event_type: Literal["game_started"] = "game_started"
-    player_order: list[UUID] = Field(
-        ..., description="Player IDs in turn order"
-    )
+    player_order: list[UUID] = Field(..., description="Player IDs in turn order")
     first_player_id: UUID
 
 
@@ -52,97 +50,58 @@ class ThreeSixesPenalty(GameEvent):
     rolls: list[int] = Field(..., description="The three six values")
 
 
-class TokenMoved(GameEvent):
-    """A token was moved on the board."""
-
-    event_type: Literal["token_moved"] = "token_moved"
-    player_id: UUID
-    token_id: str
-    from_state: TokenState
-    to_state: TokenState
-    from_progress: int
-    to_progress: int
-    roll_used: int
-
-
-class TokenExitedHell(GameEvent):
-    """A token moved from HELL to ROAD (got out with a 6)."""
-
-    event_type: Literal["token_exited_hell"] = "token_exited_hell"
-    player_id: UUID
-    token_id: str
-    roll_used: int
-
-
-class TokenReachedHeaven(GameEvent):
-    """A token reached HEAVEN (completed its journey)."""
-
-    event_type: Literal["token_reached_heaven"] = "token_reached_heaven"
-    player_id: UUID
-    token_id: str
-
-
-class TokenCaptured(GameEvent):
-    """A token was captured and sent back to HELL."""
-
-    event_type: Literal["token_captured"] = "token_captured"
-    capturing_player_id: UUID
-    capturing_token_id: str
-    captured_player_id: UUID
-    captured_token_id: str
-    position: int = Field(..., description="Board position where capture occurred")
-    grants_extra_roll: bool
-
-
-class StackFormed(GameEvent):
-    """Multiple tokens of the same player stacked together."""
-
-    event_type: Literal["stack_formed"] = "stack_formed"
-    player_id: UUID
-    stack_id: str
-    token_ids: list[str]
-    position: int
-
-
-class StackDissolved(GameEvent):
-    """A stack was broken apart (e.g., captured or split)."""
-
-    event_type: Literal["stack_dissolved"] = "stack_dissolved"
-    player_id: UUID
-    stack_id: str
-    token_ids: list[str]
-    reason: str = Field(..., description="Why the stack dissolved: 'captured', 'split'")
-
-
-class StackSplit(GameEvent):
-    """A stack was split into two groups (partial stack move)."""
-
-    event_type: Literal["stack_split"] = "stack_split"
-    player_id: UUID
-    original_stack_id: str
-    moving_token_ids: list[str] = Field(
-        ..., description="Token IDs being moved from the stack"
-    )
-    remaining_token_ids: list[str] = Field(
-        ..., description="Token IDs remaining in the original position"
-    )
-    new_stack_id: str | None = Field(
-        None, description="New stack ID for moving tokens, or None if they become individual"
-    )
-
-
 class StackMoved(GameEvent):
     """A stack was moved on the board."""
 
     event_type: Literal["stack_moved"] = "stack_moved"
     player_id: UUID
     stack_id: str
-    token_ids: list[str]
+    from_state: StackState
+    to_state: StackState
     from_progress: int
     to_progress: int
     roll_used: int
-    effective_roll: int = Field(
-        ..., description="Actual movement = roll / stack_height"
+
+
+class StackExitedHell(GameEvent):
+    """A stack moved from HELL to ROAD (got out with a 6)."""
+
+    event_type: Literal["stack_exited_hell"] = "stack_exited_hell"
+    player_id: UUID
+    stack_id: str
+    roll_used: int
+
+
+class StackReachedHeaven(GameEvent):
+    """A stack reached HEAVEN (completed its journey)."""
+
+    event_type: Literal["stack_reached_heaven"] = "stack_reached_heaven"
+    player_id: UUID
+    stack_id: str
+
+
+class StackCaptured(GameEvent):
+    """A stack was captured and sent back to HELL."""
+
+    event_type: Literal["stack_captured"] = "stack_captured"
+    capturing_player_id: UUID
+    capturing_stack_id: str = Field(
+        ..., description="ID of the capturing stack"
+    )
+    captured_player_id: UUID
+    captured_stack_id: str
+    position: int = Field(..., description="Board position where capture occurred")
+    grants_extra_roll: bool
+
+
+class StackUpdate(GameEvent):
+    """Describe stacks that were formed or dissolved."""
+
+    event_type: Literal["stack_update"] = "stack_update"
+    player_id: UUID
+    add_stacks: list["Stack"] = Field(default_factory=list, description="New stacks formed")
+    remove_stacks: list["Stack"] = Field(
+        default_factory=list, description="Stack IDs that were dissolved"
     )
 
 
@@ -185,9 +144,7 @@ class AwaitingChoice(GameEvent):
 
     event_type: Literal["awaiting_choice"] = "awaiting_choice"
     player_id: UUID
-    legal_moves: list[str] = Field(
-        ..., description="Token/stack IDs that can be moved"
-    )
+    legal_moves: list[LegalMoveGroup] = Field(..., description="Legal moves grouped by parent stack")
     roll_to_allocate: int
 
 
@@ -206,9 +163,7 @@ class GameEnded(GameEvent):
 
     event_type: Literal["game_ended"] = "game_ended"
     winner_id: UUID
-    final_rankings: list[UUID] = Field(
-        ..., description="Player IDs in finishing order"
-    )
+    final_rankings: list[UUID] = Field(..., description="Player IDs in finishing order")
 
 
 # Union of all event types for type checking
@@ -216,14 +171,11 @@ AnyGameEvent = Annotated[
     GameStarted
     | DiceRolled
     | ThreeSixesPenalty
-    | TokenMoved
-    | TokenExitedHell
-    | TokenReachedHeaven
-    | TokenCaptured
-    | StackFormed
-    | StackDissolved
-    | StackSplit
     | StackMoved
+    | StackExitedHell
+    | StackReachedHeaven
+    | StackCaptured
+    | StackUpdate
     | TurnStarted
     | RollGranted
     | TurnEnded

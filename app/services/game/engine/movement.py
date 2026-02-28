@@ -33,7 +33,7 @@ from .events import (
     TurnEnded,
     TurnStarted,
 )
-from .legal_moves import get_legal_moves
+from .legal_moves import get_legal_moves, get_legal_move_groups
 from .rolling import create_new_turn, get_next_turn_order
 from .stack_utils import find_parent_stack, get_split_result, parse_components
 from .validation import ProcessResult
@@ -472,6 +472,7 @@ def process_after_move(
         legal_moves = get_legal_moves(updated_player, remaining_rolls[0], state.board_setup)
 
         if legal_moves:
+            legal_move_groups = get_legal_move_groups(updated_player, remaining_rolls[0], state.board_setup)
             updated_turn = current_turn.model_copy(
                 update={
                     "rolls_to_allocate": remaining_rolls,
@@ -481,7 +482,7 @@ def process_after_move(
             events.append(
                 AwaitingChoice(
                     player_id=original_turn.player_id,
-                    legal_moves=legal_moves,
+                    legal_moves=legal_move_groups,
                     roll_to_allocate=remaining_rolls[0],
                 )
             )
