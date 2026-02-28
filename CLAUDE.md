@@ -135,7 +135,6 @@ Tests live in `tests/` and cover the game engine exclusively. Run with `uv run p
 - No-legal-moves for a roll ends turn — should skip to next accumulated roll
 - HELL exit doesn't trigger collision detection (no merge with own stack at starting position)
 - Homestretch collision detection not implemented (stacking should work in homestretch)
-- `process_capture_choice()` is a placeholder — needs multi-target capture selection
 
 ### Adding New Features
 

@@ -16,10 +16,11 @@ from app.schemas.game_engine import (
 
 from .events import (
     AnyGameEvent,
-    StackUpdate,
     StackCaptured,
+    StackUpdate,
 )
 from .stack_utils import build_stack_id, parse_components
+from .validation import ProcessResult
 
 
 @dataclass
@@ -425,15 +426,13 @@ def process_capture_choice(
     state: GameState,
     choice: str,
     player_id: UUID,
-) -> "ProcessResult":
+) -> ProcessResult:
     """Process a capture choice made by the player.
 
     Validates the choice against pending_capture targets, executes the
     capture, grants extra rolls, clears pending state, and resumes
     post-move flow (remaining rolls / extra rolls / turn end).
     """
-    from .validation import ProcessResult
-
     current_turn = state.current_turn
     if current_turn is None or current_turn.pending_capture is None:
         return ProcessResult.failure(

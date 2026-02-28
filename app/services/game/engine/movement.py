@@ -35,7 +35,7 @@ from .events import (
     TurnEnded,
     TurnStarted,
 )
-from .legal_moves import get_legal_moves, get_legal_move_groups
+from .legal_moves import get_legal_move_groups, get_legal_moves
 from .rolling import create_new_turn, get_next_turn_order
 from .stack_utils import find_parent_stack, get_split_result, parse_components
 from .validation import ProcessResult
