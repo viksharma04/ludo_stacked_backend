@@ -15,15 +15,17 @@ from app.schemas.game_engine import (
     BoardSetup,
     CurrentEvent,
     GameState,
+    PendingCapture,
     Player,
     Stack,
     StackState,
     Turn,
 )
 
-from .captures import detect_collisions, resolve_collision
+from .captures import detect_collisions, get_absolute_position, resolve_capture, resolve_collision
 from .events import (
     AnyGameEvent,
+    AwaitingCaptureChoice,
     AwaitingChoice,
     RollGranted,
     StackExitedHell,
@@ -121,6 +123,14 @@ def process_move(state: GameState, stack_id: str, player_id: UUID) -> ProcessRes
     if result.state is None:
         logger.error("State lost during move processing")
         return ProcessResult.failure("STATE_LOST", "State lost during move processing")
+
+    # If a capture choice is pending, consume the roll but skip post-move flow
+    if result.state.current_event == CurrentEvent.CAPTURE_CHOICE:
+        updated_turn = result.state.current_turn.model_copy(
+            update={"rolls_to_allocate": current_turn.rolls_to_allocate[1:]}
+        )
+        final_state = result.state.model_copy(update={"current_turn": updated_turn})
+        return ProcessResult.ok(final_state, result.events)
 
     logger.debug("Move applied successfully, processing post-move logic")
     return process_after_move(result.state, result.events, current_turn, roll)
@@ -580,43 +590,89 @@ def handle_road_collision(
     board_setup: BoardSetup,
     events: list[AnyGameEvent],
 ) -> ProcessResult | None:
-    """Check for and handle collisions after a move on the ROAD.
-
-    Args:
-        state: Current game state after move.
-        moved_piece: The stack that just moved.
-        player: The player who moved.
-        board_setup: Board configuration.
-        events: Events list to append to.
-
-    Returns:
-        ProcessResult if collision handling changes state, None otherwise.
-    """
+    """Check for and handle collisions after a move on the ROAD."""
     collisions = detect_collisions(state, moved_piece, player, board_setup)
 
     if not collisions:
-        logger.debug("No collisions detected")
         return None
 
-    logger.info(
-        "Collisions detected: count=%d, moving_player=%s",
-        len(collisions),
-        str(player.player_id)[:8],
-    )
-
-    # Process each collision
+    # Partition: same-player (stacking) vs opponent collisions
+    stacking_collisions = []
+    opponent_collisions = []
     for other_player, other_piece in collisions:
-        logger.debug(
-            "Resolving collision with: player=%s, piece=%s, same_player=%s",
-            str(other_player.player_id)[:8],
-            other_piece.stack_id,
-            other_player.player_id == player.player_id,
-        )
+        if other_player.player_id == player.player_id:
+            stacking_collisions.append((other_player, other_piece))
+        else:
+            opponent_collisions.append((other_player, other_piece))
+
+    # 1. Auto-resolve all stacking (same-player merges)
+    for other_player, other_piece in stacking_collisions:
         collision_result = resolve_collision(
             state, player, moved_piece, other_player, other_piece, events
         )
         if collision_result.state is not None:
             state = collision_result.state
+            # Update moved_piece and player references after merge
+            player = next(p for p in state.players if p.player_id == player.player_id)
+            # Find the merged stack (moved_piece may have been replaced)
+            merged = next(
+                (s for s in player.stacks if s.progress == moved_piece.progress and s.state == StackState.ROAD),
+                moved_piece,
+            )
+            moved_piece = merged
         events.extend(collision_result.events)
 
-    return ProcessResult.ok(state, events)
+    if not opponent_collisions:
+        return ProcessResult.ok(state, events)
+
+    # 2. Check safe space — no captures on safe spaces
+    abs_pos = get_absolute_position(moved_piece, player, board_setup)
+    if abs_pos in board_setup.safe_spaces:
+        return ProcessResult.ok(state, events)
+
+    # 3. Filter to capturable opponents (moving height >= opponent height)
+    capturable = [
+        (op, piece) for op, piece in opponent_collisions
+        if moved_piece.height >= piece.height
+    ]
+
+    if len(capturable) == 0:
+        # No capturable opponents (all too tall) — coexist
+        return ProcessResult.ok(state, events)
+
+    if len(capturable) == 1:
+        # Single capturable opponent — auto-capture
+        other_player, other_piece = capturable[0]
+        collision_result = resolve_capture(
+            state, player, moved_piece, other_player, other_piece, events
+        )
+        if collision_result.state is not None:
+            state = collision_result.state
+        events.extend(collision_result.events)
+        return ProcessResult.ok(state, events)
+
+    # 4. Multiple capturable opponents — require player choice
+    targets = [
+        f"{op.player_id}:{piece.stack_id}" for op, piece in capturable
+    ]
+    pending = PendingCapture(
+        moving_stack_id=moved_piece.stack_id,
+        position=abs_pos,
+        capturable_targets=targets,
+    )
+    updated_turn = state.current_turn.model_copy(
+        update={"pending_capture": pending}
+    )
+    new_state = state.model_copy(
+        update={
+            "current_event": CurrentEvent.CAPTURE_CHOICE,
+            "current_turn": updated_turn,
+        }
+    )
+    events.append(
+        AwaitingCaptureChoice(
+            player_id=player.player_id,
+            options=targets,
+        )
+    )
+    return ProcessResult.ok(new_state, events)
