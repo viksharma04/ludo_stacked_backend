@@ -31,14 +31,14 @@ def standard_board_setup() -> BoardSetup:
     - starting_positions = [0, 13, 26, 39]
     - squares_to_homestretch = 8g+2 = 50
     - squares_to_win = 9g+1 = 55
-    - safe_offset = 2g-2 = 10 from each starting position
+    - safe_offset = 2g-5 = 7 from each starting position
     - Board is always complete (all 4 starting positions, all 8 safe spaces)
     """
     return BoardSetup(
         squares_to_win=55,
         squares_to_homestretch=50,
         starting_positions=[0, 13, 26, 39],
-        safe_spaces=[0, 10, 13, 23, 26, 36, 39, 49],
+        safe_spaces=[0, 7, 13, 20, 26, 33, 39, 46],
         get_out_rolls=[6],
     )
 
@@ -54,7 +54,7 @@ def two_player_board_setup() -> BoardSetup:
         squares_to_win=55,
         squares_to_homestretch=50,
         starting_positions=[0, 26],
-        safe_spaces=[0, 10, 13, 23, 26, 36, 39, 49],
+        safe_spaces=[0, 7, 13, 20, 26, 33, 39, 46],
         get_out_rolls=[6],
     )
 

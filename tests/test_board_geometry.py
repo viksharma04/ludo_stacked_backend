@@ -55,7 +55,7 @@ class TestBoardSetupFormulas:
         assert board.squares_to_win == 46  # 9*5 + 1
         assert board.squares_to_homestretch == 42  # 8*5 + 2
         assert board.starting_positions == [0, 11, 22, 33]
-        assert sorted(board.safe_spaces) == sorted([0, 8, 11, 19, 22, 30, 33, 41])
+        assert sorted(board.safe_spaces) == sorted([0, 5, 11, 16, 22, 27, 33, 38])
 
     def test_board_setup_grid_length_6(self):
         """Grid length 6: step=13, squares_to_win=55, squares_to_homestretch=50."""
@@ -65,7 +65,7 @@ class TestBoardSetupFormulas:
         assert board.squares_to_win == 55  # 9*6 + 1
         assert board.squares_to_homestretch == 50  # 8*6 + 2
         assert board.starting_positions == [0, 13, 26, 39]
-        assert sorted(board.safe_spaces) == sorted([0, 10, 13, 23, 26, 36, 39, 49])
+        assert sorted(board.safe_spaces) == sorted([0, 7, 13, 20, 26, 33, 39, 46])
 
     def test_board_always_has_all_safe_spaces_regardless_of_player_count(self):
         """Even with only 2 players, all 8 safe spaces must be present."""
@@ -73,7 +73,7 @@ class TestBoardSetupFormulas:
         board = _create_board_setup(settings)
 
         # All 8 safe spaces from the full 4-corner board
-        expected_safe = [0, 10, 13, 23, 26, 36, 39, 49]
+        expected_safe = [0, 7, 13, 20, 26, 33, 39, 46]
         assert len(board.safe_spaces) == 8
         assert sorted(board.safe_spaces) == sorted(expected_safe)
 
@@ -102,7 +102,7 @@ class TestAbsolutePosition:
             squares_to_win=55,
             squares_to_homestretch=50,
             starting_positions=[0, 13, 26, 39],
-            safe_spaces=[0, 10, 13, 23, 26, 36, 39, 49],
+            safe_spaces=[0, 7, 13, 20, 26, 33, 39, 46],
             get_out_rolls=[6],
         )
         player = create_player(
@@ -125,7 +125,7 @@ class TestAbsolutePosition:
             squares_to_win=55,
             squares_to_homestretch=50,
             starting_positions=[0, 13, 26, 39],
-            safe_spaces=[0, 10, 13, 23, 26, 36, 39, 49],
+            safe_spaces=[0, 7, 13, 20, 26, 33, 39, 46],
             get_out_rolls=[6],
         )
         player1 = create_player(
@@ -158,7 +158,7 @@ class TestAbsolutePosition:
             squares_to_win=55,
             squares_to_homestretch=50,
             starting_positions=[0, 13, 26, 39],
-            safe_spaces=[0, 10, 13, 23, 26, 36, 39, 49],
+            safe_spaces=[0, 7, 13, 20, 26, 33, 39, 46],
             get_out_rolls=[6],
         )
         player2 = create_player(
@@ -194,7 +194,7 @@ class TestSafeSpaces:
             squares_to_win=55,
             squares_to_homestretch=50,
             starting_positions=[0, 13, 26, 39],
-            safe_spaces=[0, 10, 13, 23, 26, 36, 39, 49],
+            safe_spaces=[0, 7, 13, 20, 26, 33, 39, 46],
             get_out_rolls=[6],
         )
 

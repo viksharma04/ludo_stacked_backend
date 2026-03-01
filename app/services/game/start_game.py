@@ -46,7 +46,7 @@ def _create_board_setup(game_settings: GameSettings) -> BoardSetup:
     safe_spaces = []
     for pos in starting_positions:
         safe_spaces.append(pos)
-        safe_spaces.append(pos + (2 * grid_length - 2))
+        safe_spaces.append(pos + (2 * grid_length - 5))
 
     if num_players == 2:
         starting_positions = [starting_positions[0], starting_positions[2]]
