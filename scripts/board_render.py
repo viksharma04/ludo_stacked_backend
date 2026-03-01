@@ -176,7 +176,7 @@ def render_ludo_cross(
         ordered_track = track[start_index:] + track[:start_index]
         labels = {}
         step = 2 * arm_length + 1
-        safe_offset = 2 * arm_length - 2
+        safe_offset = 2 * arm_length - 5
         for i, cell in enumerate(ordered_track):
             label = str(i)
             if i % step == 0:
