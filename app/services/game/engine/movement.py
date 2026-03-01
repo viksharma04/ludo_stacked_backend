@@ -41,7 +41,7 @@ from .stack_utils import find_parent_stack, get_split_result, parse_components
 from .validation import ProcessResult
 
 
-def process_move(state: GameState, stack_id: str, player_id: UUID) -> ProcessResult:
+def process_move(state: GameState, stack_id: str, roll_value: int | None, player_id: UUID) -> ProcessResult:
     """Process a player's move selection.
 
     Determines whether this is a full stack move or a split move,
@@ -50,6 +50,7 @@ def process_move(state: GameState, stack_id: str, player_id: UUID) -> ProcessRes
     Args:
         state: Current game state.
         stack_id: ID of stack (or sub-stack) to move.
+        roll_value: Specific roll to use, or None for legacy FIFO fallback.
         player_id: The player making the move.
 
     Returns:
@@ -64,8 +65,17 @@ def process_move(state: GameState, stack_id: str, player_id: UUID) -> ProcessRes
         logger.error("process_move called with no rolls to allocate")
         return ProcessResult.failure("NO_ROLLS", "No rolls to allocate")
 
-    # Get the first roll to allocate
-    roll = current_turn.rolls_to_allocate[0]
+    # Determine which roll to use
+    if roll_value is not None:
+        if roll_value not in current_turn.rolls_to_allocate:
+            return ProcessResult.failure(
+                "INVALID_ROLL",
+                f"Roll {roll_value} is not in rolls_to_allocate",
+            )
+        roll = roll_value
+    else:
+        # Legacy fallback: use first roll (for tests not yet updated)
+        roll = current_turn.rolls_to_allocate[0]
 
     # Find the current player
     current_player = next(p for p in state.players if p.player_id == current_turn.player_id)
@@ -126,8 +136,10 @@ def process_move(state: GameState, stack_id: str, player_id: UUID) -> ProcessRes
 
     # If a capture choice is pending, consume the roll but skip post-move flow
     if result.state.current_event == CurrentEvent.CAPTURE_CHOICE:
+        remaining = list(current_turn.rolls_to_allocate)
+        remaining.remove(roll)
         updated_turn = result.state.current_turn.model_copy(
-            update={"rolls_to_allocate": current_turn.rolls_to_allocate[1:]}
+            update={"rolls_to_allocate": remaining}
         )
         final_state = result.state.model_copy(update={"current_turn": updated_turn})
         return ProcessResult.ok(final_state, result.events)
@@ -466,7 +478,8 @@ def process_after_move(
         return ProcessResult.failure("NO_ACTIVE_TURN", "Turn lost during move")
 
     # Remove the used roll
-    remaining_rolls = original_turn.rolls_to_allocate[1:]
+    remaining_rolls = list(original_turn.rolls_to_allocate)
+    remaining_rolls.remove(used_roll)
     logger.debug(
         "Post-move: used_roll=%d, remaining_rolls=%s, extra_rolls=%d",
         used_roll,

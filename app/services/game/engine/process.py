@@ -99,7 +99,7 @@ def process_action(
         result = process_roll(state, action.value, player_id)
 
     elif isinstance(action, MoveAction):
-        result = process_move(state, action.stack_id, player_id)
+        result = process_move(state, action.stack_id, action.roll_value, player_id)
 
     elif isinstance(action, CaptureChoiceAction):
         result = process_capture_choice(state, action.choice, player_id)
