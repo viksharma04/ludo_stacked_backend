@@ -62,6 +62,12 @@ class LegalMoveGroup(BaseModel):
     moves: list[str]
 
 
+class RollMoveGroup(BaseModel):
+    """Legal moves available for a specific roll value."""
+    roll: int
+    move_groups: list[LegalMoveGroup]
+
+
 class Player(PlayerAttributes):
     stacks: list[Stack]
     turn_order: int
