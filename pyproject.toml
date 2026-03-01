@@ -32,7 +32,13 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning:pyiceberg",
+]
+
 [dependency-groups]
 dev = [
+    "pytest>=8.0",
     "ruff>=0.14.13",
 ]
