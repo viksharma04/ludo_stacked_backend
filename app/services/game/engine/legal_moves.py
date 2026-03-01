@@ -2,7 +2,7 @@
 
 import logging
 
-from app.schemas.game_engine import BoardSetup, LegalMoveGroup, Player, StackState
+from app.schemas.game_engine import BoardSetup, LegalMoveGroup, Player, RollMoveGroup, StackState
 
 from .stack_utils import build_stack_id, parse_components
 
@@ -85,6 +85,43 @@ def get_legal_move_groups(
         LegalMoveGroup(stack_id=stack_id, moves=moves)
         for stack_id, moves in groups.items()
     ]
+
+
+def get_all_roll_move_groups(
+    player: Player, rolls: list[int], board_setup: BoardSetup
+) -> list[RollMoveGroup]:
+    """Compute legal move groups for all rolls, excluding rolls with no moves.
+
+    Deduplicates roll values (e.g. [6, 6, 3] produces entries for 6 and 3, not two 6s).
+    Returns only rolls that have at least one legal move.
+    """
+    seen_rolls: set[int] = set()
+    result: list[RollMoveGroup] = []
+
+    for roll in rolls:
+        if roll in seen_rolls:
+            continue
+        seen_rolls.add(roll)
+
+        move_groups = get_legal_move_groups(player, roll, board_setup)
+        if move_groups:
+            result.append(RollMoveGroup(roll=roll, move_groups=move_groups))
+
+    return result
+
+
+def get_all_legal_moves_flat(
+    player: Player, rolls: list[int], board_setup: BoardSetup
+) -> list[str]:
+    """Get the union of all legal move IDs across all rolls (flat list)."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for roll in rolls:
+        for move_id in get_legal_moves(player, roll, board_setup):
+            if move_id not in seen:
+                seen.add(move_id)
+                result.append(move_id)
+    return result
 
 
 def has_any_legal_moves(player: Player, roll: int, board_setup: BoardSetup) -> bool:
