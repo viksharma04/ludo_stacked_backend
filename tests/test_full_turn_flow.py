@@ -3,6 +3,10 @@
 These tests simulate multi-step game sequences through the main process_action
 entry point, verifying end-to-end behavior across rolls, moves, captures, and
 turn transitions.
+
+Updated for multi-roll allocation: MoveAction requires roll_value, and
+AwaitingChoice uses available_moves (list of RollMoveGroup) instead of
+roll_to_allocate + legal_moves.
 """
 
 from uuid import UUID
@@ -57,6 +61,19 @@ def find_event(events, event_type):
     """Find first event of a specific type, or None."""
     matches = find_events(events, event_type)
     return matches[0] if matches else None
+
+
+def get_rolls_offered(awaiting: AwaitingChoice) -> list[int]:
+    """Get roll values that have moves in available_moves."""
+    return [rmg.roll for rmg in awaiting.available_moves]
+
+
+def get_moves_for_roll(awaiting: AwaitingChoice, roll: int) -> set[str]:
+    """Get all move IDs offered for a specific roll value."""
+    for rmg in awaiting.available_moves:
+        if rmg.roll == roll:
+            return {m for g in rmg.move_groups for m in g.moves}
+    return set()
 
 
 # ---------------------------------------------------------------------------
@@ -141,29 +158,34 @@ class TestExitHellFlow:
         assert roll_granted is not None
         assert roll_granted.reason == "rolled_six"
 
-        # Step 2: Roll 4 -> rolls_to_allocate=[6,4], legal moves for roll 6 (exits)
+        # Step 2: Roll 4 -> rolls_to_allocate=[6,4], AwaitingChoice
         result2 = process_action(result1.state, RollAction(value=4), PLAYER_1_ID)
         assert result2.success
         assert result2.state is not None
         assert result2.state.current_event == CurrentEvent.PLAYER_CHOICE
         awaiting = find_event(result2.events, AwaitingChoice)
         assert awaiting is not None
-        assert awaiting.roll_to_allocate == 6
+        # Roll 6 should be offered (can exit HELL)
+        assert 6 in get_rolls_offered(awaiting)
 
-        # Step 3: Move stack_1 to exit HELL
-        result3 = process_action(result2.state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        # Step 3: Move stack_1 to exit HELL using roll 6
+        result3 = process_action(
+            result2.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
+        )
         assert result3.success
         assert result3.state is not None
         exited = find_event(result3.events, StackExitedHell)
         assert exited is not None
         assert exited.stack_id == "stack_1"
-        # Remaining roll [4] -> legal moves for stack_1 at progress=0
+        # Remaining roll [4] -> recomputed, stack_1 on ROAD at progress=0
         awaiting2 = find_event(result3.events, AwaitingChoice)
         assert awaiting2 is not None
-        assert awaiting2.roll_to_allocate == 4
+        assert 4 in get_rolls_offered(awaiting2)
 
-        # Step 4: Move stack_1 forward by 4 (progress 0 -> 4)
-        result4 = process_action(result3.state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        # Step 4: Move stack_1 forward by 4 (progress 0 -> 4) using roll 4
+        result4 = process_action(
+            result3.state, MoveAction(stack_id="stack_1", roll_value=4), PLAYER_1_ID
+        )
         assert result4.success
         assert result4.state is not None
         moved = find_event(result4.events, StackMoved)
@@ -221,41 +243,47 @@ class TestDoubleSixFlow:
         assert result2.state is not None
         assert result2.state.current_event == CurrentEvent.PLAYER_ROLL
 
-        # Step 3: Roll 3 -> rolls=[6,6,3], legal moves for first 6 (exit)
+        # Step 3: Roll 3 -> rolls=[6,6,3], AwaitingChoice
         result3 = process_action(result2.state, RollAction(value=3), PLAYER_1_ID)
         assert result3.success
         assert result3.state is not None
         assert result3.state.current_event == CurrentEvent.PLAYER_CHOICE
         awaiting = find_event(result3.events, AwaitingChoice)
         assert awaiting is not None
-        assert awaiting.roll_to_allocate == 6
+        assert 6 in get_rolls_offered(awaiting)
 
-        # Step 4: Move stack_1 -> exits HELL
-        result4 = process_action(result3.state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        # Step 4: Move stack_1 -> exits HELL using roll 6
+        result4 = process_action(
+            result3.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
+        )
         assert result4.success
         assert result4.state is not None
         exited1 = find_event(result4.events, StackExitedHell)
         assert exited1 is not None
         assert exited1.stack_id == "stack_1"
-        # Next roll is 6 -> legal moves for second 6 (exit another stack)
+        # Remaining [6, 3]: roll 6 should offer more HELL exits
         awaiting2 = find_event(result4.events, AwaitingChoice)
         assert awaiting2 is not None
-        assert awaiting2.roll_to_allocate == 6
+        assert 6 in get_rolls_offered(awaiting2)
 
-        # Step 5: Move stack_2 -> exits HELL, merges with stack_1 at progress=0 -> stack_1_2
-        result5 = process_action(result4.state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
+        # Step 5: Move stack_2 -> exits HELL using roll 6, merges with stack_1
+        result5 = process_action(
+            result4.state, MoveAction(stack_id="stack_2", roll_value=6), PLAYER_1_ID
+        )
         assert result5.success
         assert result5.state is not None
         exited2 = find_event(result5.events, StackExitedHell)
         assert exited2 is not None
         assert exited2.stack_id == "stack_2"
-        # Remaining roll [3] -> split stack_2 off stack_1_2 (height=1, roll 3)
+        # Remaining [3]: split moves available
         awaiting3 = find_event(result5.events, AwaitingChoice)
         assert awaiting3 is not None
-        assert awaiting3.roll_to_allocate == 3
+        assert 3 in get_rolls_offered(awaiting3)
 
-        # Step 6: Split stack_2 from stack_1_2 and move forward by 3 (progress 0 -> 3)
-        result6 = process_action(result5.state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
+        # Step 6: Split stack_2 from stack_1_2 and move forward by 3
+        result6 = process_action(
+            result5.state, MoveAction(stack_id="stack_2", roll_value=3), PLAYER_1_ID
+        )
         assert result6.success
         assert result6.state is not None
         moved = find_event(result6.events, StackMoved)
@@ -353,7 +381,7 @@ class TestCaptureInTurnFlow:
         ]
         player1 = create_player(PLAYER_1_ID, "Player 1", "red", 1, 0, stacks=p1_stacks)
 
-        # Player 2: stack_1 at ROAD progress=29 (abs = (26+29)%50 = 5), others in HELL
+        # Player 2: stack_1 at ROAD progress=29 (abs = (26+29) % 50 = 5)
         # Position 5 is NOT a safe space (safe_spaces=[0, 10, 13, 23, 26, 36, 39, 49])
         p2_stacks = [
             create_stack("stack_1", StackState.ROAD, 1, 29),
@@ -379,18 +407,19 @@ class TestCaptureInTurnFlow:
             current_turn=turn,
         )
 
-        # Step 1: Roll 3 -> legal moves for stack_1 (move 3 from progress=2 to 5)
+        # Step 1: Roll 3 -> AwaitingChoice with roll 3 moves for stack_1
         result1 = process_action(state, RollAction(value=3), PLAYER_1_ID)
         assert result1.success
         assert result1.state is not None
         assert result1.state.current_event == CurrentEvent.PLAYER_CHOICE
         awaiting = find_event(result1.events, AwaitingChoice)
         assert awaiting is not None
-        # stack_1 should be in legal moves
-        assert "stack_1" in result1.state.current_turn.legal_moves
+        assert "stack_1" in get_moves_for_roll(awaiting, 3)
 
-        # Step 2: Move stack_1 -> lands on position 5 -> captures player 2's stack
-        result2 = process_action(result1.state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        # Step 2: Move stack_1 with roll 3 -> lands on position 5 -> captures
+        result2 = process_action(
+            result1.state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID
+        )
         assert result2.success
         assert result2.state is not None
 
@@ -503,9 +532,9 @@ class TestMultiActionSequence:
         """
         Full sequence verifying event transitions:
         1. Roll 6 (extra roll) -> PLAYER_ROLL
-        2. Roll 2 (rolls=[6,2]) -> PLAYER_CHOICE (legal moves for 6)
-        3. Move (exit HELL) -> PLAYER_CHOICE (legal moves for 2)
-        4. Move (advance 2) -> turn ends
+        2. Roll 2 (rolls=[6,2]) -> PLAYER_CHOICE (available_moves for 6)
+        3. Move (exit HELL, roll_value=6) -> PLAYER_CHOICE (available_moves for 2)
+        4. Move (advance 2, roll_value=2) -> turn ends
         """
         player1 = create_player(PLAYER_1_ID, "Player 1", "red", 1, 0)
         player2 = create_player(PLAYER_2_ID, "Player 2", "blue", 2, 26)
@@ -531,17 +560,19 @@ class TestMultiActionSequence:
         assert result1.state is not None
         assert result1.state.current_event == CurrentEvent.PLAYER_ROLL
 
-        # Step 2: Roll 2 -> rolls=[6,2] -> PLAYER_CHOICE (legal moves for 6)
+        # Step 2: Roll 2 -> rolls=[6,2] -> PLAYER_CHOICE
         result2 = process_action(result1.state, RollAction(value=2), PLAYER_1_ID)
         assert result2.success
         assert result2.state is not None
         assert result2.state.current_event == CurrentEvent.PLAYER_CHOICE
         awaiting = find_event(result2.events, AwaitingChoice)
         assert awaiting is not None
-        assert awaiting.roll_to_allocate == 6
+        assert 6 in get_rolls_offered(awaiting)
 
-        # Step 3: Move stack_1 -> exits HELL -> PLAYER_CHOICE (legal moves for 2)
-        result3 = process_action(result2.state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        # Step 3: Move stack_1 -> exits HELL with roll 6 -> PLAYER_CHOICE (roll 2)
+        result3 = process_action(
+            result2.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
+        )
         assert result3.success
         assert result3.state is not None
         assert result3.state.current_event == CurrentEvent.PLAYER_CHOICE
@@ -550,10 +581,12 @@ class TestMultiActionSequence:
         assert exited.stack_id == "stack_1"
         awaiting2 = find_event(result3.events, AwaitingChoice)
         assert awaiting2 is not None
-        assert awaiting2.roll_to_allocate == 2
+        assert 2 in get_rolls_offered(awaiting2)
 
-        # Step 4: Move stack_1 by 2 -> turn ends -> PLAYER_ROLL (next player)
-        result4 = process_action(result3.state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        # Step 4: Move stack_1 by 2 with roll 2 -> turn ends -> PLAYER_ROLL (next player)
+        result4 = process_action(
+            result3.state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID
+        )
         assert result4.success
         assert result4.state is not None
         assert result4.state.current_event == CurrentEvent.PLAYER_ROLL

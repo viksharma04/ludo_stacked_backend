@@ -1,17 +1,18 @@
 """Tests for multi-roll allocation mechanics.
 
-Key intended rules (some not yet implemented):
-- Player chooses which roll to use (NOT forced FIFO order)
-- If a roll has no legal moves, skip it and try the next roll (don't end turn immediately)
+Intended rules:
+- Player sees legal moves for ALL accumulated rolls in a single AwaitingChoice event
+- AwaitingChoice.available_moves is a list of RollMoveGroup, one per usable roll value
+- Rolls with no legal moves are silently excluded from available_moves
+- Player chooses both which roll to use AND which stack to move via MoveAction(stack_id, roll_value)
+- After each move, legal moves are recomputed against the new board state
+- Capture bonus rolls are deferred until all accumulated rolls are consumed
 - Turn only ends when NO accumulated roll has legal moves
-- Rolls are fully flexible: any stack, including one that just moved, can be targeted
-- Exit HELL with 6, then use remaining roll to move the same stack
 
-Current code behavior (FIFO - will cause some tests to fail):
-- rolling.py line 176: get_legal_moves(player, new_rolls[0], ...) -- always uses first roll
-- movement.py line 66: roll = current_turn.rolls_to_allocate[0] -- always uses first roll
-- movement.py line 459: remaining_rolls = original_turn.rolls_to_allocate[1:] -- removes first
-- rolling.py lines 208-245: if first roll has no legal moves, turn ends immediately
+Schema changes from the old API:
+- AwaitingChoice.available_moves: list[RollMoveGroup] replaces legal_moves + roll_to_allocate
+- MoveAction.roll_value: int (new field) — specifies which roll to consume
+- RollMoveGroup(roll: int, move_groups: list[LegalMoveGroup]) — new model
 """
 
 from uuid import UUID
@@ -24,6 +25,7 @@ from app.schemas.game_engine import (
     GamePhase,
     GameState,
     Player,
+    RollMoveGroup,
     Stack,
     StackState,
     Turn,
@@ -50,7 +52,7 @@ from tests.conftest import (
 
 
 # ---------------------------------------------------------------------------
-# Helper
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -87,28 +89,54 @@ def make_two_player_game(
     )
 
 
+def find_awaiting(events) -> AwaitingChoice | None:
+    """Find the first AwaitingChoice event, or None."""
+    return next((e for e in events if isinstance(e, AwaitingChoice)), None)
+
+
+def get_rolls_offered(awaiting: AwaitingChoice) -> list[int]:
+    """Get the roll values that have moves available."""
+    return [rmg.roll for rmg in awaiting.available_moves]
+
+
+def get_moves_for_roll(awaiting: AwaitingChoice, roll: int) -> set[str]:
+    """Get all move IDs offered for a specific roll value."""
+    for rmg in awaiting.available_moves:
+        if rmg.roll == roll:
+            return {m for g in rmg.move_groups for m in g.moves}
+    return set()
+
+
+def get_all_moves(awaiting: AwaitingChoice) -> set[str]:
+    """Get all move IDs across all rolls."""
+    return {
+        m
+        for rmg in awaiting.available_moves
+        for g in rmg.move_groups
+        for m in g.moves
+    }
+
+
 # ---------------------------------------------------------------------------
-# 1. Roll choice should not be forced FIFO
+# 1. Combined view: all accumulated rolls shown in AwaitingChoice
 # ---------------------------------------------------------------------------
 
 
-class TestRollChoiceNotFIFO:
-    """The player should see legal moves from ALL accumulated rolls, not just the first."""
+class TestCombinedRollView:
+    """AwaitingChoice should present legal moves for ALL accumulated rolls,
+    each in its own RollMoveGroup."""
 
-    def test_legal_moves_should_consider_all_accumulated_rolls(
+    def test_both_rolls_shown_when_both_have_legal_moves(
         self, standard_board_setup: BoardSetup
     ):
-        """Player 1 has stack_1 on ROAD at progress=10, stacks 2-4 in HELL.
-        Rolls accumulated: [3, 6].
+        """Player has stack_1 on ROAD at progress=10, stacks 2-4 in HELL.
+        Accumulated rolls: [6, 3].
 
-        Roll 3 -> only stack_1 can move (advance 3).
-        Roll 6 -> stack_1 can move AND all HELL stacks can exit.
+        Roll 6: stack_1 can move (advance 6) AND stacks 2-4 can exit HELL.
+        Roll 3: stack_1 can move (advance 3).
 
-        The legal moves presented to the player should include HELL exits
-        from the 6, not just the moves computable from roll 3.
-
-        This test will FAIL with the current FIFO code because rolling.py
-        only calculates legal moves for rolls[0] (the 3).
+        AwaitingChoice.available_moves should contain RollMoveGroups for BOTH
+        roll 6 and roll 3, so the player can choose any (roll, stack) pair.
         """
         player1_stacks = [
             create_stack("stack_1", StackState.ROAD, 1, 10),
@@ -118,46 +146,8 @@ class TestRollChoiceNotFIFO:
         ]
         player2_stacks = create_stacks_in_hell()
 
-        # Build state as if both rolls have already been collected
+        # Accumulate [6] then roll 3 to trigger choice phase
         state = make_two_player_game(
-            player1_stacks=player1_stacks,
-            player2_stacks=player2_stacks,
-            board_setup=standard_board_setup,
-            rolls=[3, 6],
-            current_event=CurrentEvent.PLAYER_CHOICE,
-        )
-
-        player = next(p for p in state.players if p.player_id == PLAYER_1_ID)
-
-        # Verify per-roll legal moves individually
-        moves_for_3 = get_legal_moves(player, 3, standard_board_setup)
-        moves_for_6 = get_legal_moves(player, 6, standard_board_setup)
-
-        assert "stack_1" in moves_for_3, "stack_1 should be movable with roll 3"
-        assert "stack_2" not in moves_for_3, "HELL stacks cannot exit with 3"
-
-        assert "stack_1" in moves_for_6, "stack_1 should be movable with roll 6"
-        assert "stack_2" in moves_for_6, "stack_2 should be able to exit HELL with 6"
-        assert "stack_3" in moves_for_6, "stack_3 should be able to exit HELL with 6"
-        assert "stack_4" in moves_for_6, "stack_4 should be able to exit HELL with 6"
-
-        # Intended behaviour: the combined legal moves across ALL accumulated
-        # rolls should be presented to the player, so HELL exits appear.
-        all_intended_moves = set(moves_for_3) | set(moves_for_6)
-        assert "stack_2" in all_intended_moves
-        assert "stack_3" in all_intended_moves
-        assert "stack_4" in all_intended_moves
-
-        # The state's legal_moves should contain moves from every roll.
-        # With current FIFO code this will fail because only roll 3 is
-        # considered, so HELL stacks won't appear in state.current_turn.legal_moves.
-        assert state.current_turn is not None
-
-        # Simulate what the engine *should* do after collecting both rolls:
-        # process a non-6 roll (value=3) that finalises roll collection.
-        # Start from a state that already has [6] accumulated and is awaiting
-        # another roll.
-        pre_roll_state = make_two_player_game(
             player1_stacks=player1_stacks,
             player2_stacks=player2_stacks,
             board_setup=standard_board_setup,
@@ -165,114 +155,447 @@ class TestRollChoiceNotFIFO:
             current_event=CurrentEvent.PLAYER_ROLL,
         )
 
-        result = process_action(pre_roll_state, RollAction(value=3), PLAYER_1_ID)
+        result = process_action(state, RollAction(value=3), PLAYER_1_ID)
         assert result.success
+        assert result.state is not None
+        assert result.state.current_event == CurrentEvent.PLAYER_CHOICE
 
-        # Find the AwaitingChoice event to inspect which moves were offered
-        awaiting_events = [e for e in result.events if isinstance(e, AwaitingChoice)]
-        assert len(awaiting_events) >= 1, (
-            "Should emit AwaitingChoice after collecting [6, 3]"
-        )
+        awaiting = find_awaiting(result.events)
+        assert awaiting is not None
 
-        offered_move_ids = set()
-        for ev in awaiting_events:
-            for group in ev.legal_moves:
-                offered_move_ids.update(group.moves)
+        # Both rolls should appear in available_moves
+        offered_rolls = get_rolls_offered(awaiting)
+        assert 6 in offered_rolls, "Roll 6 should be in available_moves"
+        assert 3 in offered_rolls, "Roll 3 should be in available_moves"
 
-        # With correct multi-roll allocation, HELL stacks should appear
-        # because roll 6 can exit them, even though roll 3 cannot.
-        assert "stack_2" in offered_move_ids, (
-            "HELL stacks should be offered when a 6 is among accumulated rolls"
-        )
-        assert "stack_3" in offered_move_ids
-        assert "stack_4" in offered_move_ids
+        # Roll 6 should include HELL exits AND road move
+        moves_for_6 = get_moves_for_roll(awaiting, 6)
+        assert "stack_1" in moves_for_6, "stack_1 can advance 6 on ROAD"
+        assert "stack_2" in moves_for_6, "stack_2 can exit HELL with 6"
+        assert "stack_3" in moves_for_6, "stack_3 can exit HELL with 6"
+        assert "stack_4" in moves_for_6, "stack_4 can exit HELL with 6"
 
+        # Roll 3 should include only road move
+        moves_for_3 = get_moves_for_roll(awaiting, 3)
+        assert "stack_1" in moves_for_3, "stack_1 can advance 3 on ROAD"
+        assert "stack_2" not in moves_for_3, "HELL stacks cannot exit with 3"
 
-# ---------------------------------------------------------------------------
-# 2. Skip rolls with no legal moves
-# ---------------------------------------------------------------------------
-
-
-class TestSkipRollNoLegalMoves:
-    """If a roll has no legal moves it should be skipped; turn ends only
-    when NO accumulated roll has legal moves."""
-
-    def test_skip_roll_when_no_legal_moves_try_next(
+    def test_rolls_without_legal_moves_excluded(
         self, standard_board_setup: BoardSetup
     ):
-        """Player 1 has all stacks in HELL. Rolls accumulated = [3, 6].
-
-        Roll 3 has no legal moves (cannot exit HELL with 3).
-        Roll 6 has legal moves (can exit HELL).
-
-        Turn should NOT end. Roll 3 should be skipped and legal moves
-        for roll 6 should be offered via AwaitingChoice.
-
-        This will FAIL because current code (rolling.py line 176) checks
-        get_legal_moves(player, new_rolls[0], ...) -- i.e. roll 3 -- and
-        since it has no moves the turn ends immediately.
+        """All stacks in HELL, rolls = [3, 6, 2].
+        Only roll 6 has legal moves. Rolls 3 and 2 should NOT appear in
+        available_moves — they are silently excluded.
         """
         player1_stacks = create_stacks_in_hell()
         player2_stacks = create_stacks_in_hell()
 
-        # State already has roll [6] and now we process a non-6 roll (3) that
-        # arrives *first* in the list.  The engine appends 3, giving [6, 3].
-        # But we want to test the scenario where the first roll in the list
-        # has no moves.  So we set up [3] already accumulated and add 6 via
-        # extra roll.  Actually, a 6 always grants an extra roll, so to get
-        # [3, 6] naturally: player rolls 3 (no extra), then... that is only
-        # one roll.  The only way to accumulate [3, 6] is if 6 was rolled
-        # first (granting extra), then 3.  So the natural order is [6, 3].
-        #
-        # To test with [3, 6] we construct the state directly and call the
-        # post-roll path, or we accept the natural order [6, 3] where 6 is
-        # first and has legal moves (current code works).  Let's instead
-        # manufacture the harder case: rolls = [3, 6] set directly, then
-        # trigger the "check legal moves" path.
-        #
-        # We simulate by having roll [3] already accumulated, the player
-        # rolling 6 (which grants extra roll), then rolling e.g. 2 to
-        # finalise.  That gives [3, 6, 2].  Roll 3 has no moves, roll 6
-        # does.  But current code only checks rolls[0] = 3.
-        #
-        # Simplest approach: set up state with rolls=[3] and process
-        # RollAction(value=6).  Because 6 grants extra roll, we then
-        # process RollAction(value=2) giving rolls=[3, 6, 2].  But at that
-        # point the engine checks rolls[0] = 3 -> no legal moves -> ends turn.
-        #
-        # For a clean test we directly build state with accumulated rolls
-        # [3, 6] and PLAYER_ROLL, then process a harmless non-6 roll to
-        # trigger the legal-move check.  But a roll always appends, giving
-        # [3, 6, X].  We actually want the check that happens right after
-        # the last roll.  The check in rolling.py happens on line 176 after
-        # the roll that does NOT grant an extra roll.
-        #
-        # Strategy: accumulate [3] so far, process RollAction(value=4).
-        # That gives rolls=[3, 4].  Neither can exit HELL.  This is the
-        # baseline "both fail" case (separate test below).
-        #
-        # For the "skip" case we need a 6 in the list.  Natural accumulation
-        # that ends with a non-6: start with rolls=[], roll 6 -> extra roll,
-        # roll 3 -> rolls=[6, 3], engine checks rolls[0]=6 -> has moves -> OK.
-        # That path works today.  The bug only manifests when a *non-6* sits
-        # before a 6 in the list.  That happens if, after a move consumes
-        # the 6, the remaining [3] is checked and has no moves, but there
-        # might be new rolls granted later.  Actually the clearest scenario:
-        #
-        # State: rolls=[3, 6], engine should check all, offer 6's moves.
-        # We build this state and process RollAction(value=2) to push [3,6,2].
-        # No -- a roll appended means we test [3,6,2].
-        #
-        # Cleanest: build state with rolls=[3,6] right before the engine
-        # would evaluate legal moves.  That happens at the PLAYER_ROLL ->
-        # non-6 roll transition.  So:  rolls_to_allocate=[3] already,
-        # process RollAction(value=6).  Value 6 grants extra roll, state
-        # becomes rolls=[3,6], current_event=PLAYER_ROLL.  Then process
-        # RollAction(value=2).  Rolls become [3,6,2].  Engine checks
-        # rolls[0]=3 -> no moves -> turn ends.  With correct behaviour it
-        # should skip 3, find 6 has moves, offer AwaitingChoice.
+        # Accumulate [3, 6] then roll 2
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[3],
+            current_event=CurrentEvent.PLAYER_ROLL,
+        )
+        # Roll 6 → extra roll granted
+        r1 = process_action(state, RollAction(value=6), PLAYER_1_ID)
+        assert r1.success and r1.state is not None
+        assert r1.state.current_turn.rolls_to_allocate == [3, 6]
 
-        # Step 1: set up with one accumulated roll of 3
+        # Roll 2 → rolls=[3, 6, 2], engine evaluates
+        r2 = process_action(r1.state, RollAction(value=2), PLAYER_1_ID)
+        assert r2.success and r2.state is not None
+
+        awaiting = find_awaiting(r2.events)
+        assert awaiting is not None, (
+            "Should emit AwaitingChoice because roll 6 has legal moves"
+        )
+
+        offered_rolls = get_rolls_offered(awaiting)
+        assert 6 in offered_rolls, "Roll 6 should appear (can exit HELL)"
+        assert 3 not in offered_rolls, "Roll 3 should be excluded (no moves)"
+        assert 2 not in offered_rolls, "Roll 2 should be excluded (no moves)"
+
+    def test_available_moves_contain_legal_move_groups(
+        self, standard_board_setup: BoardSetup
+    ):
+        """Verify the RollMoveGroup structure has proper LegalMoveGroups
+        with parent stack grouping."""
+        player1_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 10),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player2_stacks = create_stacks_in_hell()
+
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[6],
+            current_event=CurrentEvent.PLAYER_ROLL,
+        )
+
+        result = process_action(state, RollAction(value=3), PLAYER_1_ID)
+        assert result.success
+
+        awaiting = find_awaiting(result.events)
+        assert awaiting is not None
+
+        # Each RollMoveGroup should have move_groups (list of LegalMoveGroup)
+        for rmg in awaiting.available_moves:
+            assert isinstance(rmg, RollMoveGroup)
+            assert isinstance(rmg.roll, int)
+            assert len(rmg.move_groups) > 0
+            for group in rmg.move_groups:
+                assert isinstance(group.stack_id, str)
+                assert isinstance(group.moves, list)
+                assert len(group.moves) > 0
+
+
+# ---------------------------------------------------------------------------
+# 2. MoveAction with roll_value
+# ---------------------------------------------------------------------------
+
+
+class TestMoveActionWithRollValue:
+    """MoveAction now requires roll_value to specify which roll to consume."""
+
+    def test_move_consumes_specified_roll(
+        self, standard_board_setup: BoardSetup
+    ):
+        """Using roll_value=6 removes exactly one 6 from rolls_to_allocate."""
+        player1_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 10),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player2_stacks = create_stacks_in_hell()
+
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[6, 4],
+            legal_moves=["stack_1", "stack_2", "stack_3", "stack_4"],
+            current_event=CurrentEvent.PLAYER_CHOICE,
+        )
+
+        # Move stack_1 using roll 6
+        result = process_action(
+            state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
+        )
+        assert result.success
+        assert result.state is not None
+
+        # Roll 6 consumed, only roll 4 remains
+        assert result.state.current_turn is not None
+        assert result.state.current_turn.rolls_to_allocate == [4]
+
+    def test_player_can_choose_non_first_roll(
+        self, standard_board_setup: BoardSetup
+    ):
+        """Player chooses roll 4 instead of roll 6. Roll 4 consumed, 6 remains."""
+        player1_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 10),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player2_stacks = create_stacks_in_hell()
+
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[6, 4],
+            legal_moves=["stack_1", "stack_2", "stack_3", "stack_4"],
+            current_event=CurrentEvent.PLAYER_CHOICE,
+        )
+
+        # Move stack_1 using roll 4 (not the first roll!)
+        result = process_action(
+            state, MoveAction(stack_id="stack_1", roll_value=4), PLAYER_1_ID
+        )
+        assert result.success
+        assert result.state is not None
+
+        # stack_1 should have moved by 4 (progress 10 -> 14)
+        moved = [e for e in result.events if isinstance(e, StackMoved)]
+        assert len(moved) == 1
+        assert moved[0].to_progress == 14
+
+        # Roll 4 consumed, roll 6 remains
+        assert result.state.current_turn.rolls_to_allocate == [6]
+
+        # AwaitingChoice should show moves for remaining roll 6
+        awaiting = find_awaiting(result.events)
+        assert awaiting is not None
+        assert 6 in get_rolls_offered(awaiting)
+
+    def test_invalid_roll_value_not_in_pool(
+        self, standard_board_setup: BoardSetup
+    ):
+        """roll_value not in rolls_to_allocate returns error, state unchanged."""
+        player1_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 10),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player2_stacks = create_stacks_in_hell()
+
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[6, 4],
+            legal_moves=["stack_1"],
+            current_event=CurrentEvent.PLAYER_CHOICE,
+        )
+
+        # Try to use roll 5, which is not in the pool
+        result = process_action(
+            state, MoveAction(stack_id="stack_1", roll_value=5), PLAYER_1_ID
+        )
+        assert not result.success
+        assert result.state is None or result.state == state
+
+    def test_stack_not_legal_for_specified_roll(
+        self, standard_board_setup: BoardSetup
+    ):
+        """Stack that is not a legal move for the specified roll returns error."""
+        player1_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 10),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player2_stacks = create_stacks_in_hell()
+
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[6, 4],
+            legal_moves=["stack_1", "stack_2", "stack_3", "stack_4"],
+            current_event=CurrentEvent.PLAYER_CHOICE,
+        )
+
+        # stack_2 is in HELL; roll 4 cannot exit HELL (only 6 can)
+        result = process_action(
+            state, MoveAction(stack_id="stack_2", roll_value=4), PLAYER_1_ID
+        )
+        assert not result.success
+
+
+# ---------------------------------------------------------------------------
+# 3. Duplicate rolls
+# ---------------------------------------------------------------------------
+
+
+class TestDuplicateRolls:
+    """Handling of duplicate roll values in the pool."""
+
+    def test_consume_one_of_duplicate_rolls(
+        self, standard_board_setup: BoardSetup
+    ):
+        """rolls=[6, 6, 3], MoveAction with roll_value=6 -> remaining [6, 3]."""
+        player1_stacks = create_stacks_in_hell()
+        player2_stacks = create_stacks_in_hell()
+
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[6, 6, 3],
+            legal_moves=["stack_1", "stack_2", "stack_3", "stack_4"],
+            current_event=CurrentEvent.PLAYER_CHOICE,
+        )
+
+        # Exit stack_1 from HELL using one of the two 6s
+        result = process_action(
+            state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
+        )
+        assert result.success
+        assert result.state is not None
+
+        # One 6 consumed: remaining should be [6, 3]
+        assert result.state.current_turn.rolls_to_allocate == [6, 3]
+
+    def test_duplicate_rolls_deduplicated_in_available_moves(
+        self, standard_board_setup: BoardSetup
+    ):
+        """rolls=[6, 6] with all in HELL: available_moves should have
+        one entry for roll 6 (not two identical entries)."""
+        player1_stacks = create_stacks_in_hell()
+        player2_stacks = create_stacks_in_hell()
+
+        # Build state right before choice phase
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[6],
+            current_event=CurrentEvent.PLAYER_ROLL,
+        )
+
+        # Roll 6 again → extra roll, but then we need a non-6 to trigger choice.
+        # Actually with [6, 6] both are 6s so rolling continues.
+        # Let's use [6, 6, 3] and check the initial AwaitingChoice.
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[6, 6],
+            current_event=CurrentEvent.PLAYER_ROLL,
+        )
+
+        # Roll 3 to finalize → rolls=[6, 6, 3]
+        result = process_action(state, RollAction(value=3), PLAYER_1_ID)
+        assert result.success
+
+        awaiting = find_awaiting(result.events)
+        assert awaiting is not None
+
+        # Roll 6 should appear exactly once (deduplicated)
+        rolls_with_6 = [rmg for rmg in awaiting.available_moves if rmg.roll == 6]
+        assert len(rolls_with_6) == 1, (
+            "Duplicate roll values should be deduplicated in available_moves"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 4. Recomputation after each move
+# ---------------------------------------------------------------------------
+
+
+class TestRecomputationAfterMove:
+    """Legal moves are recomputed against the new board state after each move."""
+
+    def test_hell_exit_enables_road_moves_for_remaining_rolls(
+        self, standard_board_setup: BoardSetup
+    ):
+        """After exiting HELL with roll 6, remaining roll 4 can now move
+        the stack that just landed on ROAD.
+
+        Before the move: stack_1 in HELL, roll 4 has no legal moves.
+        After the move: stack_1 on ROAD at progress=0, roll 4 can advance it.
+        """
+        player1_stacks = create_stacks_in_hell()
+        player2_stacks = create_stacks_in_hell()
+
+        # Accumulate rolls [6, 4] via rolling
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[],
+            current_event=CurrentEvent.PLAYER_ROLL,
+        )
+
+        # Roll 6 → extra roll
+        r1 = process_action(state, RollAction(value=6), PLAYER_1_ID)
+        assert r1.success and r1.state is not None
+        assert r1.state.current_turn.rolls_to_allocate == [6]
+
+        # Roll 4 → rolls=[6, 4], engine evaluates
+        r2 = process_action(r1.state, RollAction(value=4), PLAYER_1_ID)
+        assert r2.success and r2.state is not None
+        assert r2.state.current_event == CurrentEvent.PLAYER_CHOICE
+
+        # Initial AwaitingChoice: roll 6 has moves (HELL exit), roll 4 doesn't
+        awaiting1 = find_awaiting(r2.events)
+        assert awaiting1 is not None
+        assert 6 in get_rolls_offered(awaiting1)
+        # Roll 4 shouldn't have moves (all in HELL)
+        assert 4 not in get_rolls_offered(awaiting1)
+
+        # Exit stack_1 from HELL using roll 6
+        r3 = process_action(
+            r2.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
+        )
+        assert r3.success and r3.state is not None
+
+        exit_events = [e for e in r3.events if isinstance(e, StackExitedHell)]
+        assert len(exit_events) == 1
+
+        # After recomputation, roll 4 NOW has legal moves (stack_1 on ROAD)
+        awaiting2 = find_awaiting(r3.events)
+        assert awaiting2 is not None, (
+            "After HELL exit, remaining roll 4 should offer moves"
+        )
+        assert 4 in get_rolls_offered(awaiting2)
+        assert "stack_1" in get_moves_for_roll(awaiting2, 4)
+
+    def test_merge_changes_legal_moves(
+        self, standard_board_setup: BoardSetup
+    ):
+        """After two stacks merge (stacking), legal moves reflect the
+        new height. A roll that was divisible by height=1 may not be
+        divisible by height=2.
+        """
+        # stack_1 on ROAD at progress=0, stack_2 on ROAD at progress=3
+        player1_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 0),
+            create_stack("stack_2", StackState.ROAD, 1, 3),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player2_stacks = create_stacks_in_hell()
+
+        # rolls=[3, 4]: roll 3 can move stack_2 to progress=6 or stack_1 to 3
+        # Moving stack_1 with roll 3 → progress=3, merges with stack_2 → stack_1_2 (height=2)
+        # Remaining roll 4: stack_1_2 height=2, 4%2==0, effective=2 → can move
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[3, 4],
+            legal_moves=["stack_1", "stack_2"],
+            current_event=CurrentEvent.PLAYER_CHOICE,
+        )
+
+        # Move stack_1 with roll 3 → merges with stack_2 at progress=3
+        result = process_action(
+            state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID
+        )
+        assert result.success and result.state is not None
+
+        # After merge, recomputed moves for roll 4:
+        # stack_1_2 (height=2, progress=3): 4%2==0, effective=2, progress 3→5
+        awaiting = find_awaiting(result.events)
+        assert awaiting is not None
+        assert 4 in get_rolls_offered(awaiting)
+        moves_for_4 = get_moves_for_roll(awaiting, 4)
+        assert "stack_1_2" in moves_for_4, (
+            "Merged stack should be movable with remaining roll"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 5. Skip rolls with no legal moves
+# ---------------------------------------------------------------------------
+
+
+class TestSkipRollNoLegalMoves:
+    """Rolls with no legal moves are silently excluded from AwaitingChoice.
+    Turn only ends when NO roll has legal moves."""
+
+    def test_usable_roll_offered_when_others_have_no_moves(
+        self, standard_board_setup: BoardSetup
+    ):
+        """All stacks in HELL, accumulated [3, 6, 2].
+        Roll 3 and 2 have no legal moves. Roll 6 does.
+        Turn should NOT end; AwaitingChoice should show only roll 6.
+        """
+        player1_stacks = create_stacks_in_hell()
+        player2_stacks = create_stacks_in_hell()
+
+        # Start with [3], roll 6 → extra roll, roll 2 → rolls=[3, 6, 2]
         state = make_two_player_game(
             player1_stacks=player1_stacks,
             player2_stacks=player2_stacks,
@@ -281,56 +604,31 @@ class TestSkipRollNoLegalMoves:
             current_event=CurrentEvent.PLAYER_ROLL,
         )
 
-        # Step 2: roll a 6 -> extra roll granted, rolls become [3, 6]
-        result1 = process_action(state, RollAction(value=6), PLAYER_1_ID)
-        assert result1.success
-        assert result1.state is not None
-        assert result1.state.current_event == CurrentEvent.PLAYER_ROLL
-        assert result1.state.current_turn is not None
-        assert result1.state.current_turn.rolls_to_allocate == [3, 6]
+        r1 = process_action(state, RollAction(value=6), PLAYER_1_ID)
+        assert r1.success and r1.state is not None
+        assert r1.state.current_turn.rolls_to_allocate == [3, 6]
 
-        # Step 3: roll a 2 -> rolls become [3, 6, 2], engine evaluates moves
-        result2 = process_action(result1.state, RollAction(value=2), PLAYER_1_ID)
-        assert result2.success
-        assert result2.state is not None
+        r2 = process_action(r1.state, RollAction(value=2), PLAYER_1_ID)
+        assert r2.success and r2.state is not None
 
-        # With correct multi-roll logic: roll 3 has no moves (all in HELL),
-        # but roll 6 DOES (exit HELL).  Turn should NOT end.
-        turn_ended_events = [e for e in result2.events if isinstance(e, TurnEnded)]
-        awaiting_events = [e for e in result2.events if isinstance(e, AwaitingChoice)]
+        turn_ended = [e for e in r2.events if isinstance(e, TurnEnded)]
+        assert len(turn_ended) == 0, "Turn should NOT end when roll 6 has moves"
 
-        assert len(turn_ended_events) == 0, (
-            "Turn should NOT end when roll 6 has legal moves"
-        )
-        assert len(awaiting_events) >= 1, (
-            "AwaitingChoice should be emitted for the roll that has legal moves"
-        )
+        awaiting = find_awaiting(r2.events)
+        assert awaiting is not None
+        offered_rolls = get_rolls_offered(awaiting)
+        assert 6 in offered_rolls
+        assert 3 not in offered_rolls
+        assert 2 not in offered_rolls
 
     def test_turn_ends_only_when_all_rolls_have_no_legal_moves(
         self, standard_board_setup: BoardSetup
     ):
-        """Player 1 has all stacks in HELL. Rolls = [3, 2].
-        Neither roll can exit HELL (only 6 can). Turn should end.
+        """All stacks in HELL, single roll of 3. No roll has legal moves.
+        Turn should end.
         """
         player1_stacks = create_stacks_in_hell()
         player2_stacks = create_stacks_in_hell()
-
-        # Build state with [3] accumulated, process RollAction(value=2).
-        # This gives rolls=[3, 2].  Both fail -> turn ends.
-        # Note: without a prior 6 there is no extra roll, so we cannot
-        # naturally accumulate [3, 2].  The only way to get two rolls
-        # without a 6 is via a capture bonus roll.  We'll use extra_rolls=1
-        # to grant one more roll after the first.
-        #
-        # Actually, for simplicity: the rolls=[3] can only exist if a 6
-        # was rolled earlier and consumed, or if the test sets up the state
-        # directly.  The rolling code always starts from rolls=[] for a new
-        # turn.  A roll of 3 would immediately check for legal moves and
-        # end the turn (all in HELL).  We need to get two rolls accumulated.
-        #
-        # Approach: start with rolls=[] and extra_rolls=0.  Roll 3 -> engine
-        # checks rolls[0]=3 -> no legal moves -> turn ends.  This already
-        # proves the simpler case.  Let's just test that.
 
         state = make_two_player_game(
             player1_stacks=player1_stacks,
@@ -340,30 +638,178 @@ class TestSkipRollNoLegalMoves:
             current_event=CurrentEvent.PLAYER_ROLL,
         )
 
-        # Roll 3 with all stacks in HELL: no legal moves at all
         result = process_action(state, RollAction(value=3), PLAYER_1_ID)
-        assert result.success
-        assert result.state is not None
+        assert result.success and result.state is not None
 
-        turn_ended_events = [e for e in result.events if isinstance(e, TurnEnded)]
-        assert len(turn_ended_events) == 1, (
-            "Turn should end when no accumulated roll has legal moves"
-        )
-        assert turn_ended_events[0].reason == "no_legal_moves"
-
-        # Verify it's now the next player's turn
-        assert result.state.current_turn is not None
+        turn_ended = [e for e in result.events if isinstance(e, TurnEnded)]
+        assert len(turn_ended) == 1
+        assert turn_ended[0].reason == "no_legal_moves"
         assert result.state.current_turn.player_id == PLAYER_2_ID
+
+    def test_unusable_rolls_silently_discarded_after_move(
+        self, standard_board_setup: BoardSetup
+    ):
+        """After a move, if remaining rolls have no legal moves, they are
+        discarded and the turn ends (or extra rolls kick in).
+
+        rolls=[6, 2], stack_1 on ROAD at progress=53.
+        Move stack_1 with roll 6 → progress=53 is invalid (53+6=59 > 55).
+        Actually, let's use: stack_1 ROAD progress=10, roll 6 → progress=16.
+        Remaining roll 2: stack_1 can advance 2 → 18. But if stacks 2-4 in HELL,
+        roll 2 can't exit. So only stack_1 uses roll 2.
+
+        Better scenario: stack_1 at HOMESTRETCH progress=53.
+        Roll 2 → progress 55 (HEAVEN!). Roll 1 → progress 54 (legal).
+        Move with roll 2 → HEAVEN. Remaining roll 1 → stack_1 is gone,
+        stacks 2-4 in HELL → roll 1 has no moves → turn ends.
+        """
+        player1_stacks = [
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 53),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player2_stacks = create_stacks_in_hell()
+
+        state = make_two_player_game(
+            player1_stacks=player1_stacks,
+            player2_stacks=player2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[2, 1],
+            legal_moves=["stack_1"],
+            current_event=CurrentEvent.PLAYER_CHOICE,
+        )
+
+        # Move stack_1 with roll 2 → progress 53+2=55 → HEAVEN
+        result = process_action(
+            state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID
+        )
+        assert result.success and result.state is not None
+
+        # Remaining roll [1]: no moves (stack_1 in HEAVEN, rest in HELL)
+        # Roll 1 silently discarded, turn ends
+        turn_ended = [e for e in result.events if isinstance(e, TurnEnded)]
+        assert len(turn_ended) == 1
+        assert turn_ended[0].reason == "all_rolls_used" or turn_ended[0].reason == "no_legal_moves"
 
 
 # ---------------------------------------------------------------------------
-# 3. Multiple moves in a single turn
+# 6. Bonus roll ordering
+# ---------------------------------------------------------------------------
+
+
+class TestBonusRollOrdering:
+    """Capture bonus rolls are deferred until all accumulated rolls consumed."""
+
+    def test_remaining_rolls_before_bonus_roll(
+        self, standard_board_setup: BoardSetup
+    ):
+        """Player has rolls=[6, 4]. Uses roll 6, captures opponent.
+        extra_rolls += 1. But remaining roll [4] should be offered FIRST
+        before entering PLAYER_ROLL for the bonus.
+        """
+        # Player 1: stack_1 on ROAD at progress=2
+        # Player 2: stack_1 on ROAD at progress=34 (abs = (26+34)%52 = 8)
+        # Wait, let me compute this correctly.
+        # Player 1 abs_starting_index=0, stack at progress=2 → abs_pos = (0+2) % num_squares
+        # Player 2 abs_starting_index=26, stack at progress=29 → abs_pos = (26+29) % 52 = 3
+        # Hmm, the board has starting_positions [0, 13, 26, 39], so total squares on
+        # the main loop = 4 * 13 = 52.
+        # Player 1 progress=2 → abs = (0+2) % 52 = 2
+        # For capture: Player 2 must have a stack at abs position 8 (not safe)
+        # Player 2 abs_starting_index=26, progress=p → abs = (26+p) % 52
+        # We want abs = 8 → 26+p ≡ 8 (mod 52) → p = -18 mod 52 = 34
+        # Player 1 needs to land at abs 8: progress 0→8 with roll 6 → progress=6? No.
+        # Progress = 2, roll 6 → progress = 8. abs_pos = (0+8) % 52 = 8. Good.
+        # Position 8 is NOT a safe space (safe = [0,10,13,23,26,36,39,49]).
+
+        p1_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 2),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        p2_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 34),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+
+        state = make_two_player_game(
+            player1_stacks=p1_stacks,
+            player2_stacks=p2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[6, 4],
+            legal_moves=["stack_1"],
+            current_event=CurrentEvent.PLAYER_CHOICE,
+        )
+
+        # Move stack_1 with roll 6: progress 2→8, captures P2's stack at abs 8
+        result = process_action(
+            state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
+        )
+        assert result.success and result.state is not None
+
+        # Capture grants extra_rolls, but remaining roll [4] should be offered first
+        assert result.state.current_event == CurrentEvent.PLAYER_CHOICE, (
+            "Should be PLAYER_CHOICE for remaining roll 4, not PLAYER_ROLL for bonus"
+        )
+        assert result.state.current_turn.extra_rolls >= 1, (
+            "extra_rolls should be incremented from capture"
+        )
+
+        awaiting = find_awaiting(result.events)
+        assert awaiting is not None
+        assert 4 in get_rolls_offered(awaiting)
+
+    def test_bonus_roll_after_all_rolls_consumed(
+        self, standard_board_setup: BoardSetup
+    ):
+        """Player captures with their LAST roll. No remaining rolls.
+        Should enter PLAYER_ROLL for the capture bonus.
+        """
+        p1_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 2),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        p2_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 34),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+
+        state = make_two_player_game(
+            player1_stacks=p1_stacks,
+            player2_stacks=p2_stacks,
+            board_setup=standard_board_setup,
+            rolls=[6],
+            legal_moves=["stack_1"],
+            current_event=CurrentEvent.PLAYER_CHOICE,
+        )
+
+        # Move stack_1 with roll 6: captures, no remaining rolls
+        result = process_action(
+            state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
+        )
+        assert result.success and result.state is not None
+
+        # No remaining rolls → enters PLAYER_ROLL for bonus
+        assert result.state.current_event == CurrentEvent.PLAYER_ROLL
+        roll_granted = [e for e in result.events if isinstance(e, RollGranted)]
+        assert any(rg.reason == "capture_bonus" for rg in roll_granted)
+
+
+# ---------------------------------------------------------------------------
+# 7. Multiple moves in a single turn
 # ---------------------------------------------------------------------------
 
 
 class TestMultipleMovesInTurn:
-    """After exiting HELL with a 6, remaining rolls should allow moving
-    the same stack (or others) further."""
+    """Multi-step turn flows with explicit roll selection."""
 
     def test_exit_hell_then_move_same_stack(
         self, standard_board_setup: BoardSetup
@@ -371,11 +817,11 @@ class TestMultipleMovesInTurn:
         """Full integration through process_action.
 
         Player 1 has all stacks in HELL.
-        1. Roll 6 -> extra roll granted
-        2. Roll 4 -> rolls = [6, 4], legal moves calculated
-        3. Move stack_1 -> exits HELL (uses roll 6), now at ROAD progress=0
-        4. Remaining roll [4] should offer stack_1 (progress=0, can advance 4)
-        5. Move stack_1 -> progress = 4
+        1. Roll 6 → extra roll granted
+        2. Roll 4 → rolls=[6, 4], AwaitingChoice with available_moves
+        3. MoveAction(stack_id="stack_1", roll_value=6) → exits HELL, progress=0
+        4. Remaining roll [4] recomputed: stack_1 on ROAD → movable
+        5. MoveAction(stack_id="stack_1", roll_value=4) → progress=4
 
         Final state: stack_1 at ROAD progress=4.
         """
@@ -390,96 +836,82 @@ class TestMultipleMovesInTurn:
             current_event=CurrentEvent.PLAYER_ROLL,
         )
 
-        # Step 1: Roll 6 -> extra roll
-        result1 = process_action(state, RollAction(value=6), PLAYER_1_ID)
-        assert result1.success
-        assert result1.state is not None
-        assert result1.state.current_event == CurrentEvent.PLAYER_ROLL
-        assert result1.state.current_turn is not None
-        assert result1.state.current_turn.rolls_to_allocate == [6]
+        # Step 1: Roll 6 → extra roll
+        r1 = process_action(state, RollAction(value=6), PLAYER_1_ID)
+        assert r1.success and r1.state is not None
+        assert r1.state.current_event == CurrentEvent.PLAYER_ROLL
+        assert r1.state.current_turn.rolls_to_allocate == [6]
 
-        # Verify RollGranted for extra roll
-        roll_granted = [e for e in result1.events if isinstance(e, RollGranted)]
+        roll_granted = [e for e in r1.events if isinstance(e, RollGranted)]
         assert any(rg.reason == "rolled_six" for rg in roll_granted)
 
-        # Step 2: Roll 4 -> rolls = [6, 4], should get AwaitingChoice
-        result2 = process_action(result1.state, RollAction(value=4), PLAYER_1_ID)
-        assert result2.success
-        assert result2.state is not None
-        assert result2.state.current_turn is not None
-        assert result2.state.current_turn.rolls_to_allocate == [6, 4]
-        assert result2.state.current_event == CurrentEvent.PLAYER_CHOICE
+        # Step 2: Roll 4 → rolls=[6, 4], AwaitingChoice
+        r2 = process_action(r1.state, RollAction(value=4), PLAYER_1_ID)
+        assert r2.success and r2.state is not None
+        assert r2.state.current_turn.rolls_to_allocate == [6, 4]
+        assert r2.state.current_event == CurrentEvent.PLAYER_CHOICE
 
-        # Legal moves should include HELL stacks (for the 6)
-        awaiting = [e for e in result2.events if isinstance(e, AwaitingChoice)]
-        assert len(awaiting) == 1
-        offered_ids = set()
-        for group in awaiting[0].legal_moves:
-            offered_ids.update(group.moves)
-        assert "stack_1" in offered_ids
+        awaiting1 = find_awaiting(r2.events)
+        assert awaiting1 is not None
+        # Roll 6 has HELL exits, roll 4 doesn't (all in HELL)
+        assert 6 in get_rolls_offered(awaiting1)
+        assert "stack_1" in get_moves_for_roll(awaiting1, 6)
 
-        # Step 3: Move stack_1 -> exit HELL
-        result3 = process_action(result2.state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
-        assert result3.success
-        assert result3.state is not None
+        # Step 3: Exit stack_1 from HELL with roll 6
+        r3 = process_action(
+            r2.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
+        )
+        assert r3.success and r3.state is not None
 
-        # Verify stack exited hell
-        exit_events = [e for e in result3.events if isinstance(e, StackExitedHell)]
+        exit_events = [e for e in r3.events if isinstance(e, StackExitedHell)]
         assert len(exit_events) == 1
         assert exit_events[0].stack_id == "stack_1"
 
-        # After using the 6, remaining roll is [4].
-        # stack_1 is now on ROAD at progress=0, can move 4.
-        # Should get AwaitingChoice for the remaining roll.
-        awaiting2 = [e for e in result3.events if isinstance(e, AwaitingChoice)]
-        assert len(awaiting2) == 1, (
-            "After exiting HELL, remaining roll [4] should offer moves"
+        # After HELL exit, remaining [4], recomputed: stack_1 on ROAD can move
+        assert r3.state.current_event == CurrentEvent.PLAYER_CHOICE
+        assert r3.state.current_turn.rolls_to_allocate == [4]
+
+        awaiting2 = find_awaiting(r3.events)
+        assert awaiting2 is not None
+        assert 4 in get_rolls_offered(awaiting2)
+        assert "stack_1" in get_moves_for_roll(awaiting2, 4)
+
+        # Step 4: Move stack_1 with roll 4 → progress=4
+        r4 = process_action(
+            r3.state, MoveAction(stack_id="stack_1", roll_value=4), PLAYER_1_ID
         )
+        assert r4.success and r4.state is not None
 
-        assert result3.state.current_event == CurrentEvent.PLAYER_CHOICE
-        assert result3.state.current_turn is not None
-        assert result3.state.current_turn.rolls_to_allocate == [4]
+        moved = [e for e in r4.events if isinstance(e, StackMoved)]
+        assert len(moved) == 1
+        assert moved[0].stack_id == "stack_1"
+        assert moved[0].to_progress == 4
 
-        # Verify stack_1 is in the offered legal moves
-        offered_ids2 = set()
-        for group in awaiting2[0].legal_moves:
-            offered_ids2.update(group.moves)
-        assert "stack_1" in offered_ids2, (
-            "stack_1 (now on ROAD) should be movable with remaining roll 4"
-        )
-
-        # Step 4: Move stack_1 with roll 4 -> progress=4
-        result4 = process_action(result3.state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
-        assert result4.success
-        assert result4.state is not None
-
-        moved_events = [e for e in result4.events if isinstance(e, StackMoved)]
-        assert len(moved_events) == 1
-        assert moved_events[0].stack_id == "stack_1"
-        assert moved_events[0].to_progress == 4
+        # Turn should end
+        turn_ended = [e for e in r4.events if isinstance(e, TurnEnded)]
+        assert len(turn_ended) == 1
 
         # Verify final stack state
-        final_player1 = next(
-            p for p in result4.state.players if p.player_id == PLAYER_1_ID
-        )
-        final_stack1 = next(
-            s for s in final_player1.stacks if s.stack_id == "stack_1"
-        )
-        assert final_stack1.state == StackState.ROAD
-        assert final_stack1.progress == 4
+        final_p1 = next(p for p in r4.state.players if p.player_id == PLAYER_1_ID)
+        s1 = next(s for s in final_p1.stacks if s.stack_id == "stack_1")
+        assert s1.state == StackState.ROAD
+        assert s1.progress == 4
 
     def test_two_stacks_exit_hell_with_double_six(
         self, standard_board_setup: BoardSetup
     ):
         """Player 1 has all stacks in HELL.
 
-        1. Roll 6 -> extra roll
-        2. Roll 6 -> extra roll
-        3. Roll 3 -> rolls = [6, 6, 3], legal moves for 6 -> exit HELL
-        4. Move stack_1 -> exits HELL (progress=0)
-        5. Next roll 6 -> move stack_2 -> exits HELL, merges with stack_1 -> stack_1_2 (height=2)
-        6. Remaining roll 3 -> split stack_2 off stack_1_2 and move 3
-        7. Move stack_2 -> progress=3
+        1. Roll 6 → extra roll
+        2. Roll 6 → extra roll
+        3. Roll 3 → rolls=[6, 6, 3], AwaitingChoice
+        4. MoveAction(stack_id="stack_1", roll_value=6) → exits HELL
+        5. Remaining [6, 3]: roll 6 can exit more HELL stacks
+        6. MoveAction(stack_id="stack_2", roll_value=6) → exits HELL,
+           merges with stack_1 at progress=0 → stack_1_2 (height=2)
+        7. Remaining [3]: stack_1_2 height=2, 3%2!=0, but split: stack_2 (height=1)
+           can move 3. So "stack_2" is a legal move for roll 3.
+        8. MoveAction(stack_id="stack_2", roll_value=3) → progress=3
 
         Final: stack_1 ROAD progress=0, stack_2 ROAD progress=3.
         """
@@ -494,73 +926,59 @@ class TestMultipleMovesInTurn:
             current_event=CurrentEvent.PLAYER_ROLL,
         )
 
-        # Roll 6
+        # Roll 6, Roll 6, Roll 3
         r1 = process_action(state, RollAction(value=6), PLAYER_1_ID)
         assert r1.success and r1.state is not None
-        assert r1.state.current_event == CurrentEvent.PLAYER_ROLL
         assert r1.state.current_turn.rolls_to_allocate == [6]
 
-        # Roll 6 again
         r2 = process_action(r1.state, RollAction(value=6), PLAYER_1_ID)
         assert r2.success and r2.state is not None
-        assert r2.state.current_event == CurrentEvent.PLAYER_ROLL
         assert r2.state.current_turn.rolls_to_allocate == [6, 6]
 
-        # Roll 3 -> rolls = [6, 6, 3], should offer moves
         r3 = process_action(r2.state, RollAction(value=3), PLAYER_1_ID)
         assert r3.success and r3.state is not None
         assert r3.state.current_turn.rolls_to_allocate == [6, 6, 3]
         assert r3.state.current_event == CurrentEvent.PLAYER_CHOICE
 
-        # Move stack_1 (exit HELL with first 6)
-        r4 = process_action(r3.state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
-        assert r4.success and r4.state is not None
+        # AwaitingChoice should show roll 6 (HELL exits), roll 3 excluded (no moves)
+        awaiting1 = find_awaiting(r3.events)
+        assert awaiting1 is not None
+        assert 6 in get_rolls_offered(awaiting1)
 
-        exit_events = [e for e in r4.events if isinstance(e, StackExitedHell)]
-        assert len(exit_events) == 1
-        assert exit_events[0].stack_id == "stack_1"
-
-        # After first move, remaining rolls should be [6, 3].
-        # The second 6 should offer HELL exits.
-        assert r4.state.current_turn is not None
-        assert r4.state.current_event == CurrentEvent.PLAYER_CHOICE
-
-        awaiting = [e for e in r4.events if isinstance(e, AwaitingChoice)]
-        assert len(awaiting) == 1
-
-        offered = set()
-        for group in awaiting[0].legal_moves:
-            offered.update(group.moves)
-
-        # stack_2, stack_3, stack_4 still in HELL; stack_1 on ROAD at 0
-        # With roll 6: HELL stacks can exit, stack_1 can advance 6
-        assert "stack_2" in offered, "stack_2 should be offered to exit HELL"
-
-        # Move stack_2 (exit HELL with second 6)
-        r5 = process_action(r4.state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
-        assert r5.success and r5.state is not None
-
-        exit_events2 = [e for e in r5.events if isinstance(e, StackExitedHell)]
-        assert len(exit_events2) == 1
-        assert exit_events2[0].stack_id == "stack_2"
-
-        # stack_1 and stack_2 merged into stack_1_2 (height=2) at progress=0.
-        # Remaining roll [3]: split stack_2 off stack_1_2 (height=1, roll 3).
-        assert r5.state.current_turn is not None
-        assert r5.state.current_event == CurrentEvent.PLAYER_CHOICE
-
-        awaiting2 = [e for e in r5.events if isinstance(e, AwaitingChoice)]
-        assert len(awaiting2) == 1
-
-        offered2 = set()
-        for group in awaiting2[0].legal_moves:
-            offered2.update(group.moves)
-        assert "stack_2" in offered2, (
-            "stack_2 (split from stack_1_2) should be movable with roll 3"
+        # Exit stack_1 with roll 6
+        r4 = process_action(
+            r3.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
         )
+        assert r4.success and r4.state is not None
+        exit1 = [e for e in r4.events if isinstance(e, StackExitedHell)]
+        assert len(exit1) == 1 and exit1[0].stack_id == "stack_1"
 
-        # Move stack_2 (split from stack_1_2) with roll 3 -> progress=3
-        r6 = process_action(r5.state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
+        # Remaining [6, 3]: roll 6 offers HELL exits + stack_1 advance
+        assert r4.state.current_event == CurrentEvent.PLAYER_CHOICE
+        awaiting2 = find_awaiting(r4.events)
+        assert awaiting2 is not None
+        assert "stack_2" in get_moves_for_roll(awaiting2, 6)
+
+        # Exit stack_2 with roll 6 → merges with stack_1 at progress=0
+        r5 = process_action(
+            r4.state, MoveAction(stack_id="stack_2", roll_value=6), PLAYER_1_ID
+        )
+        assert r5.success and r5.state is not None
+        exit2 = [e for e in r5.events if isinstance(e, StackExitedHell)]
+        assert len(exit2) == 1 and exit2[0].stack_id == "stack_2"
+
+        # Remaining [3]: recomputed against merged stack
+        assert r5.state.current_event == CurrentEvent.PLAYER_CHOICE
+        awaiting3 = find_awaiting(r5.events)
+        assert awaiting3 is not None
+        assert 3 in get_rolls_offered(awaiting3)
+        # stack_2 (split from stack_1_2, height=1) can move 3
+        assert "stack_2" in get_moves_for_roll(awaiting3, 3)
+
+        # Move stack_2 (split from merged stack) with roll 3 → progress=3
+        r6 = process_action(
+            r5.state, MoveAction(stack_id="stack_2", roll_value=3), PLAYER_1_ID
+        )
         assert r6.success and r6.state is not None
 
         moved = [e for e in r6.events if isinstance(e, StackMoved)]
@@ -569,20 +987,15 @@ class TestMultipleMovesInTurn:
         assert moved[0].to_progress == 3
 
         # Verify final state
-        final_p1 = next(
-            p for p in r6.state.players if p.player_id == PLAYER_1_ID
-        )
+        final_p1 = next(p for p in r6.state.players if p.player_id == PLAYER_1_ID)
         s1 = next(s for s in final_p1.stacks if s.stack_id == "stack_1")
         s2 = next(s for s in final_p1.stacks if s.stack_id == "stack_2")
-
-        assert s1.state == StackState.ROAD
-        assert s1.progress == 0
-        assert s2.state == StackState.ROAD
-        assert s2.progress == 3
+        assert s1.state == StackState.ROAD and s1.progress == 0
+        assert s2.state == StackState.ROAD and s2.progress == 3
 
 
 # ---------------------------------------------------------------------------
-# 4. Roll allocation after a move
+# 8. Roll allocation after a move
 # ---------------------------------------------------------------------------
 
 
@@ -595,9 +1008,8 @@ class TestRollAllocationAfterMove:
     ):
         """Player has stack_1 on ROAD at progress=10. Rolls=[6, 4].
 
-        Player moves stack_1 with roll 6 -> progress=16.
-        Then remaining roll 4 should be available. Verify AwaitingChoice
-        event is emitted for the second roll.
+        Player moves stack_1 with roll_value=6 → progress=16.
+        Remaining roll [4] should offer AwaitingChoice with recomputed moves.
         """
         player1_stacks = [
             create_stack("stack_1", StackState.ROAD, 1, 10),
@@ -607,7 +1019,6 @@ class TestRollAllocationAfterMove:
         ]
         player2_stacks = create_stacks_in_hell()
 
-        # Build state with rolls [6, 4] and PLAYER_CHOICE (ready to move)
         state = make_two_player_game(
             player1_stacks=player1_stacks,
             player2_stacks=player2_stacks,
@@ -617,33 +1028,23 @@ class TestRollAllocationAfterMove:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        # Move stack_1 with roll 6 (first in FIFO) -> progress 10+6=16
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
-        assert result.success
-        assert result.state is not None
-
-        moved_events = [e for e in result.events if isinstance(e, StackMoved)]
-        assert len(moved_events) == 1
-        assert moved_events[0].stack_id == "stack_1"
-        assert moved_events[0].to_progress == 16
-
-        # After the move, remaining roll [4] should prompt another choice
-        awaiting = [e for e in result.events if isinstance(e, AwaitingChoice)]
-        assert len(awaiting) == 1, (
-            "AwaitingChoice should be emitted for the remaining roll 4"
+        # Move stack_1 with roll_value=6 → progress 10+6=16
+        result = process_action(
+            state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
         )
-        assert awaiting[0].roll_to_allocate == 4
+        assert result.success and result.state is not None
 
-        # State should still be in PLAYER_CHOICE
+        moved = [e for e in result.events if isinstance(e, StackMoved)]
+        assert len(moved) == 1
+        assert moved[0].to_progress == 16
+
+        # Remaining [4]: AwaitingChoice with recomputed moves
         assert result.state.current_event == CurrentEvent.PLAYER_CHOICE
-        assert result.state.current_turn is not None
         assert result.state.current_turn.rolls_to_allocate == [4]
 
-        # stack_1 should be in the legal moves for roll 4
-        # (progress=16, can advance 4 to 20, well within 55)
-        offered = set()
-        for group in awaiting[0].legal_moves:
-            offered.update(group.moves)
-        assert "stack_1" in offered, (
-            "stack_1 at progress=16 should be movable with remaining roll 4"
-        )
+        awaiting = find_awaiting(result.events)
+        assert awaiting is not None
+        assert 4 in get_rolls_offered(awaiting)
+
+        # stack_1 at progress=16 can advance 4 to 20
+        assert "stack_1" in get_moves_for_roll(awaiting, 4)
