@@ -194,9 +194,9 @@ def process_roll(state: GameState, roll_value: int, player_id: UUID) -> ProcessR
 
     # No legal moves - end turn
     logger.info(
-        "No legal moves available: player=%s, roll=%d",
+        "No legal moves available: player=%s, rolls=%s",
         str(player_id)[:8],
-        new_rolls[0],
+        new_rolls,
     )
     next_turn_order = get_next_turn_order(current_turn.current_turn_order, len(state.players))
     next_player = next(p for p in state.players if p.turn_order == next_turn_order)
