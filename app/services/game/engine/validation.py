@@ -199,6 +199,40 @@ def validate_action(
                 f"'{action.stack_id}' is not a legal move",
             )
 
+        # Validate roll_value if provided
+        if action.roll_value is not None:
+            if action.roll_value not in state.current_turn.rolls_to_allocate:
+                logger.warning(
+                    "Validation failed: INVALID_ROLL, roll_value=%d, rolls=%s",
+                    action.roll_value,
+                    state.current_turn.rolls_to_allocate,
+                )
+                return ValidationResult.error(
+                    "INVALID_ROLL",
+                    f"Roll {action.roll_value} is not in rolls_to_allocate",
+                )
+
+            # Verify the stack is legal for this specific roll
+            from app.services.game.engine.legal_moves import get_legal_moves
+
+            current_player = next(
+                p for p in state.players if p.player_id == state.current_turn.player_id
+            )
+            roll_legal_moves = get_legal_moves(
+                current_player, action.roll_value, state.board_setup
+            )
+            if action.stack_id not in roll_legal_moves:
+                logger.warning(
+                    "Validation failed: ILLEGAL_MOVE_FOR_ROLL, stack=%s, roll=%d, legal=%s",
+                    action.stack_id,
+                    action.roll_value,
+                    roll_legal_moves,
+                )
+                return ValidationResult.error(
+                    "ILLEGAL_MOVE",
+                    f"'{action.stack_id}' is not a legal move for roll {action.roll_value}",
+                )
+
     elif isinstance(action, CaptureChoiceAction):
         if state.current_event != CurrentEvent.CAPTURE_CHOICE:
             logger.warning(
