@@ -295,11 +295,6 @@ class TestReachingHeaven:
 class TestHomestretchStacking:
     """Test that own stacks can merge within the homestretch."""
 
-    @pytest.mark.xfail(
-        reason="Engine collision detection only runs on ROAD; "
-        "homestretch stacking not yet implemented",
-        strict=True,
-    )
     def test_own_stacks_merge_on_homestretch(self, standard_board_setup: BoardSetup):
         """Player has stack_1 at HOMESTRETCH progress=51 and stack_2 at
         HOMESTRETCH progress=50. Roll=1 moves stack_2 to progress=51,

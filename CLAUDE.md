@@ -53,7 +53,7 @@ The game engine handles all Ludo Stacked game mechanics:
 - **`process.py`** - Main entry point `process_action()` - validates and processes actions
 - **`validation.py`** - Pre-processing validation (phase, turn, legal moves)
 - **`rolling.py`** - Dice roll processing, extra rolls, three-sixes penalty
-- **`movement.py`** - Stack movement, collision detection
+- **`movement.py`** - Stack movement, collision detection (road and homestretch)
 - **`legal_moves.py`** - Calculate valid moves after dice roll
 - **`captures.py`** - Collision resolution, capture mechanics
 - **`stack_utils.py`** - Composition-based stack ID utilities (merge, split, naming conventions)
@@ -71,6 +71,8 @@ Related: **`app/services/game/start_game.py`** - Game initialization, creates in
 - Board is always complete regardless of player count (all 4 starts, all 8 safe spaces)
 - 2 players: opposite corners (1st and 3rd starting positions)
 - 3 players: first three starting positions
+
+**Absolute position formula** (for collision tests): `abs_pos = (player.abs_starting_index + progress) % squares_to_homestretch`. When setting up test collisions, solve for the opponent's `progress` given a target `abs_pos`.
 
 ### Authentication Flow
 
@@ -126,14 +128,13 @@ Tests live in `tests/` and cover the game engine exclusively. Run with `uv run p
 - **`conftest.py`** - Shared fixtures: fixed player UUIDs, standard/two-player board setups, helper state builders
 - Test files map to engine modules: `test_movement.py`, `test_rolling.py`, `test_captures.py`, `test_validation.py`, `test_stack_utils.py`, `test_stacking.py`, `test_events.py`, `test_game_finished.py`, `test_get_out_of_hell.py`, `test_start_game_handler.py`, `test_board_geometry.py`, `test_homestretch_heaven.py`, `test_hell_exit_collisions.py`, `test_multi_roll_allocation.py`, `test_capture_chains.py`, `test_capture_choice.py`, `test_full_turn_flow.py`
 - Tests construct `GameState` directly and call engine functions — no HTTP/WebSocket integration tests yet
-- **Failing tests are intentional** — they encode intended game rules and serve as the implementation backlog. See `docs/plans/2026-02-28-core-engine-test-suite-design.md` for details.
+- All tests currently pass. When new game rules are added, failing tests may be used as the implementation backlog. See `docs/plans/2026-02-28-core-engine-test-suite-design.md` for design details.
 - **Board fixtures use grid_length=6**: `squares_to_win=55`, `squares_to_homestretch=50`, `safe_spaces=[0,7,13,20,26,33,39,46]`
 
-### Known Implementation Gaps (tracked by failing tests)
+### Known Implementation Gaps
 
 - `_create_board_setup()`: `squares_to_homestretch` uses `8g+1` instead of `8g+2`; 2-player uses consecutive starts instead of opposite corners
 - HELL exit doesn't trigger collision detection (no merge with own stack at starting position)
-- Homestretch collision detection not implemented (stacking should work in homestretch)
 
 ### Adding New Features
 

@@ -22,7 +22,7 @@ from app.schemas.game_engine import (
     Turn,
 )
 
-from .captures import detect_collisions, get_absolute_position, resolve_capture, resolve_collision
+from .captures import detect_collisions, get_absolute_position, resolve_capture, resolve_collision, resolve_stacking
 from .events import (
     AnyGameEvent,
     AwaitingCaptureChoice,
@@ -273,7 +273,7 @@ def apply_stack_move(
     ]
     updated_state = state.model_copy(update={"players": updated_players})
 
-    # Handle collisions on ROAD (not HOMESTRETCH or HEAVEN)
+    # Handle collisions on ROAD
     if new_state == StackState.ROAD:
         logger.debug("Checking for collisions at progress=%d", new_progress)
         collision_result = handle_road_collision(
@@ -281,6 +281,15 @@ def apply_stack_move(
         )
         if collision_result is not None:
             return collision_result
+
+    # Handle same-player stacking on HOMESTRETCH
+    if new_state == StackState.HOMESTRETCH:
+        logger.debug("Checking for homestretch stacking at progress=%d", new_progress)
+        stacking_result = handle_homestretch_stacking(
+            updated_state, updated_stack, updated_player, events
+        )
+        if stacking_result is not None:
+            return stacking_result
 
     logger.debug(
         "Stack move complete: stack=%s, %s->%s, progress=%d->%d",
@@ -433,6 +442,16 @@ def apply_split_move(
         )
         if collision_result is not None:
             return collision_result
+
+    # Handle same-player stacking on HOMESTRETCH
+    if moving_state == StackState.HOMESTRETCH:
+        fresh_player = next(p for p in updated_state.players if p.player_id == player.player_id)
+        logger.debug("Checking for homestretch stacking after split at progress=%d", new_progress)
+        stacking_result = handle_homestretch_stacking(
+            updated_state, moving_stack, fresh_player, events
+        )
+        if stacking_result is not None:
+            return stacking_result
 
     logger.debug(
         "Split move complete: parent=%s, remaining=%s, moving=%s, progress=%d->%d",
@@ -754,3 +773,37 @@ def handle_road_collision(
         )
     )
     return ProcessResult.ok(new_state, events)
+
+
+def handle_homestretch_stacking(
+    state: GameState,
+    moved_piece: Stack,
+    player: Player,
+    events: list[AnyGameEvent],
+) -> ProcessResult | None:
+    """Check for and handle same-player stacking on the HOMESTRETCH.
+
+    Homestretch is per-player, so only same-player merges are possible.
+    Two stacks from the same player at the same progress merge.
+    """
+    for stack in player.stacks:
+        if stack.stack_id == moved_piece.stack_id:
+            continue
+        if stack.state != StackState.HOMESTRETCH:
+            continue
+        if stack.progress != moved_piece.progress:
+            continue
+
+        logger.info(
+            "Homestretch stacking: %s merges with %s at progress=%d",
+            moved_piece.stack_id,
+            stack.stack_id,
+            moved_piece.progress,
+        )
+        result = resolve_stacking(state, player, moved_piece, stack)
+        if result.state is not None:
+            state = result.state
+        events.extend(result.events)
+        return ProcessResult.ok(state, events)
+
+    return None

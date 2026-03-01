@@ -245,7 +245,7 @@ The game engine (`app/services/game/engine/`) implements Ludo Stacked game mecha
 
 - **Token States**: HELL → ROAD → HOMESTRETCH → HEAVEN
 - **Dice Rolling**: Roll 1-6, extra roll on 6, three sixes penalty
-- **Stacking**: Own tokens on same position stack together, move as unit with effective roll = roll / stack height
+- **Stacking**: Own tokens on same position stack together (on road and homestretch), move as unit with effective roll = roll / stack height
 - **Captures**: Landing on opponent token sends it to HELL, grants bonus roll
 - **Safe Spaces**: Starting positions and marked spaces where tokens cannot be captured
 
