@@ -86,7 +86,7 @@ class TestStackReachingHeaven:
         assert "stack_1" in state.current_turn.legal_moves
 
         # Make the move
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID)
         assert result.success
 
         # Verify StackReachedHeaven event
@@ -200,7 +200,7 @@ class TestStackReachingHeaven:
         state = result.state
 
         # Make the move
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID)
         assert result.success
 
         # Verify stack is now in HOMESTRETCH
@@ -259,7 +259,7 @@ class TestAllStacksInHeaven:
         result = process_action(state, RollAction(value=2), PLAYER_1_ID)
         state = result.state
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID)
         assert result.success
 
         # Verify StackReachedHeaven event

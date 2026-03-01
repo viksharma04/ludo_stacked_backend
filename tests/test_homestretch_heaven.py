@@ -341,7 +341,7 @@ class TestHomestretchStacking:
         assert "stack_2" in state.current_turn.legal_moves
 
         # Move stack_2 from progress 50 to 51 (landing on stack_1)
-        result = process_action(state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_2", roll_value=1), PLAYER_1_ID)
         assert result.success
 
         # Verify StackUpdate event shows merge

@@ -83,7 +83,7 @@ class TestStackMovement:
         # Move the stack
         assert "stack_1" in state.current_turn.legal_moves
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=4), PLAYER_1_ID)
         assert result.success
 
         # Verify StackMoved event
@@ -147,7 +147,7 @@ class TestStackMovement:
         state = result.state
 
         # Move the stack
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=4), PLAYER_1_ID)
         assert result.success
 
         # Verify stack is now in HOMESTRETCH
@@ -315,7 +315,7 @@ class TestMoveValidation:
         state = result.state
 
         # Try to move stack in hell (not in legal moves)
-        result = process_action(state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_2", roll_value=3), PLAYER_1_ID)
 
         assert not result.success
         assert result.error_code == "ILLEGAL_MOVE"

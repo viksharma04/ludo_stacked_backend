@@ -45,7 +45,7 @@ class TestGamePhaseValidation:
         """Moving before game starts should fail."""
         result = process_action(
             two_player_game_not_started,
-            MoveAction(stack_id="stack_1"),
+            MoveAction(stack_id="stack_1", roll_value=6),
             PLAYER_1_ID,
         )
 
@@ -116,7 +116,7 @@ class TestTurnValidation:
         # Player 2 tries to move
         result = process_action(
             state,
-            MoveAction(stack_id="stack_1"),
+            MoveAction(stack_id="stack_1", roll_value=3),
             PLAYER_2_ID,
         )
 
@@ -131,7 +131,7 @@ class TestActionTypeValidation:
         """Cannot move when game is waiting for roll."""
         result = process_action(
             game_player1_turn,
-            MoveAction(stack_id="stack_1"),
+            MoveAction(stack_id="stack_1", roll_value=6),
             PLAYER_1_ID,
         )
 
@@ -188,7 +188,7 @@ class TestIllegalMoveValidation:
         state = result.state
 
         # Try to move a stack in hell (not a legal move with roll of 3)
-        result = process_action(state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_2", roll_value=3), PLAYER_1_ID)
 
         assert not result.success
         assert result.error_code == "ILLEGAL_MOVE"
@@ -200,7 +200,7 @@ class TestIllegalMoveValidation:
         state = result.state
 
         # Try to move a nonexistent stack
-        result = process_action(state, MoveAction(stack_id="fake_stack"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="fake_stack", roll_value=3), PLAYER_1_ID)
 
         assert not result.success
         assert result.error_code == "ILLEGAL_MOVE"

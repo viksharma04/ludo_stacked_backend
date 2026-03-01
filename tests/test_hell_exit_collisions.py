@@ -98,7 +98,7 @@ class TestExitToEmptyStart:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert result.success
 
         # Verify stack_1 is now on ROAD at progress=0
@@ -143,7 +143,7 @@ class TestExitWithOwnStackAtStart:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_2", roll_value=6), PLAYER_1_ID)
         assert result.success
 
         # After merge, stack_1 and stack_2 should combine into stack_1_2
@@ -197,7 +197,7 @@ class TestExitWithOwnStackAtStart:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_3"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_3", roll_value=6), PLAYER_1_ID)
         assert result.success
 
         # After merge, stack_1_2 and stack_3 should combine into stack_1_2_3
@@ -255,7 +255,7 @@ class TestExitWithOpponentAtStart:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert result.success
 
         new_state = result.state
@@ -347,7 +347,7 @@ class TestMultipleExitsInTurn:
         assert len(state.current_turn.legal_moves) == 4
 
         # Step 4: Exit first stack from HELL
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert result.success
         state = result.state
 
@@ -363,7 +363,7 @@ class TestMultipleExitsInTurn:
 
         # Step 5: Exit second stack from HELL
         assert "stack_2" in state.current_turn.legal_moves
-        result = process_action(state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_2", roll_value=6), PLAYER_1_ID)
         assert result.success
         state = result.state
 
@@ -398,7 +398,7 @@ class TestExitEvents:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_3"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_3", roll_value=6), PLAYER_1_ID)
         assert result.success
 
         # Find the StackExitedHell event

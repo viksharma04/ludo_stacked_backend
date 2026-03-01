@@ -103,7 +103,7 @@ class TestBasicCapture:
         state = result.state
 
         # Move the stack
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID)
         assert result.success
 
         # Verify capture event
@@ -182,7 +182,7 @@ class TestBasicCapture:
         result = process_action(state, RollAction(value=3), PLAYER_1_ID)
         state = result.state
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID)
         assert result.success
 
         # Verify extra roll was granted - player should still be rolling
@@ -261,7 +261,7 @@ class TestSafeSpaces:
 
         # Move the stack
         if "stack_1" in state.current_turn.legal_moves:
-            result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+            result = process_action(state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID)
             assert result.success
 
             # Verify NO capture event (safe space)
@@ -346,7 +346,7 @@ class TestStackCaptures:
         state = result.state
 
         # Move the stack
-        result = process_action(state, MoveAction(stack_id="stack_1_2"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1_2", roll_value=4), PLAYER_1_ID)
         assert result.success
 
         # Verify capture event
@@ -431,7 +431,7 @@ class TestStackCaptures:
         state = result.state
 
         # Move the stack
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID)
         assert result.success
 
         # Verify NO capture event (single stack cannot capture larger stack)

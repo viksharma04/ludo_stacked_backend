@@ -54,7 +54,8 @@ class TestGetOutOfHell:
         assert isinstance(awaiting, AwaitingChoice)
 
         # Should have legal moves for stacks in hell (using the 6)
-        assert len(awaiting.legal_moves) > 0
+        offered = {m for rmg in awaiting.available_moves for g in rmg.move_groups for m in g.moves}
+        assert len(offered) > 0
 
     def test_stack_exits_hell_to_road_position_zero(self, game_player1_turn: GameState):
         """Stack exiting HELL should land on ROAD at progress 0."""
@@ -69,7 +70,7 @@ class TestGetOutOfHell:
         # Choose a stack from hell
         assert "stack_1" in state.current_turn.legal_moves
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert result.success
 
         # Verify StackExitedHell event
@@ -154,7 +155,7 @@ class TestMultipleGetOuts:
         assert state.current_event == CurrentEvent.PLAYER_CHOICE
 
         # Get first stack out
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert result.success
         state = result.state
 
@@ -162,7 +163,7 @@ class TestMultipleGetOuts:
         # (second 6 should allow getting another stack out)
         if state.current_event == CurrentEvent.PLAYER_CHOICE:
             if "stack_2" in state.current_turn.legal_moves:
-                result = process_action(state, MoveAction(stack_id="stack_2"), PLAYER_1_ID)
+                result = process_action(state, MoveAction(stack_id="stack_2", roll_value=6), PLAYER_1_ID)
                 assert result.success
 
                 # stack_2 exited HELL and merged with stack_1 at progress=0 -> stack_1_2

@@ -84,7 +84,7 @@ class TestStackFormation:
         state = result.state
 
         # Move stack_1 from 5 to 10
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=5), PLAYER_1_ID)
         assert result.success
 
         # Verify StackUpdate event
@@ -165,7 +165,7 @@ class TestStackMovement:
         assert "stack_1_2" in state.current_turn.legal_moves
 
         # Move the stack
-        result = process_action(state, MoveAction(stack_id="stack_1_2"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1_2", roll_value=4), PLAYER_1_ID)
         assert result.success
 
         # Verify stack moved event
@@ -293,7 +293,7 @@ class TestPartialStackMovement:
         assert "stack_3" in state.current_turn.legal_moves  # height 1, 4/1=4
 
         # Move sub-stack of 2 (stack_2_3)
-        result = process_action(state, MoveAction(stack_id="stack_2_3"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_2_3", roll_value=4), PLAYER_1_ID)
         assert result.success
 
         # Verify StackUpdate event for the split
@@ -358,7 +358,7 @@ class TestThreeWayMerge:
         state = result.state
 
         # Move stack_3 from 10 to 15 (landing on stack_1_2)
-        result = process_action(state, MoveAction(stack_id="stack_3"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_3", roll_value=5), PLAYER_1_ID)
         assert result.success
 
         # Verify merged into stack_1_2_3
@@ -410,7 +410,7 @@ class TestMaxStackSize:
         assert result.success
         state = result.state
 
-        result = process_action(state, MoveAction(stack_id="stack_4"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_4", roll_value=4), PLAYER_1_ID)
         assert result.success
 
         player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
@@ -497,7 +497,7 @@ class TestSplitThenRemerge:
         assert result.success
         state = result.state
 
-        result = process_action(state, MoveAction(stack_id="stack_1_2"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1_2", roll_value=4), PLAYER_1_ID)
         assert result.success
 
         # Verify re-merged into stack_1_2_3
@@ -588,7 +588,7 @@ class TestSplitStackEventOrdering:
         state = result.state
 
         # Move partial stack_3 (split from stack_1_2_3)
-        result = process_action(state, MoveAction(stack_id="stack_3"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_3", roll_value=5), PLAYER_1_ID)
         assert result.success
 
         # Find StackUpdate and StackMoved events

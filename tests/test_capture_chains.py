@@ -108,7 +108,7 @@ class TestCaptureGrantsExtraRolls:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID)
         assert result.success
 
         # Verify capture event was emitted
@@ -167,7 +167,7 @@ class TestCaptureGrantsExtraRolls:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_1_2"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1_2", roll_value=4), PLAYER_1_ID)
         assert result.success
 
         # Verify capture event
@@ -222,7 +222,7 @@ class TestExtraRollAfterAllocatedRolls:
             extra_rolls=1,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID)
         assert result.success
 
         # After the allocated roll [2] is consumed, extra_rolls=1 kicks in
@@ -332,7 +332,7 @@ class TestExtraRollBehavior:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID)
         assert result.success
 
         # Check the sequence of events: StackMoved, StackCaptured, RollGranted
@@ -486,7 +486,7 @@ class TestExtraRollBehavior:
         assert "stack_1" in state.current_turn.legal_moves
 
         # Step 2: Move stack_1 to capture Player 2's stack at abs=5
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID)
         assert result.success
 
         # Verify capture happened

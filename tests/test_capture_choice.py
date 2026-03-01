@@ -134,7 +134,7 @@ class TestSingleOpponentAutoResolved:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID)
         assert result.success
 
         # A StackCaptured event should be emitted
@@ -210,7 +210,7 @@ class TestMultipleOpponentsRequireChoice:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID)
         assert result.success
 
         # Should emit AwaitingCaptureChoice (not auto-capture both)
@@ -460,7 +460,7 @@ class TestCaptureChoiceHeightFilter:
             current_event=CurrentEvent.PLAYER_CHOICE,
         )
 
-        result = process_action(state, MoveAction(stack_id="stack_1"), PLAYER_1_ID)
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID)
         assert result.success
 
         # Only Player 2's stack is capturable (height 1 vs height 1).
