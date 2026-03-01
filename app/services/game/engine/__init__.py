@@ -37,7 +37,7 @@ from .events import (
 )
 
 # Legal moves
-from .legal_moves import get_legal_move_groups, get_legal_moves, has_any_legal_moves
+from .legal_moves import get_legal_move_groups, get_legal_moves
 
 # Main processing
 from .process import check_win_condition, process_action
@@ -79,5 +79,4 @@ __all__ = [
     # Legal moves
     "get_legal_moves",
     "get_legal_move_groups",
-    "has_any_legal_moves",
 ]

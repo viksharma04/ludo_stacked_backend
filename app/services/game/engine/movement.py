@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 from app.schemas.game_engine import (
     BoardSetup,
     CurrentEvent,
+    GamePhase,
     GameState,
     PendingCapture,
     Player,
@@ -27,6 +28,7 @@ from .events import (
     AnyGameEvent,
     AwaitingCaptureChoice,
     AwaitingChoice,
+    GameEnded,
     RollGranted,
     StackExitedHell,
     StackMoved,
@@ -481,6 +483,11 @@ def process_after_move(
     Returns:
         ProcessResult with final state and all events.
     """
+    # Check win condition before any turn transition
+    win_result = _check_and_handle_win(state, events)
+    if win_result is not None:
+        return win_result
+
     current_turn = state.current_turn
     if current_turn is None:
         logger.error("Turn lost during move processing")
@@ -602,6 +609,11 @@ def resume_after_capture(
     was already consumed by the move that triggered the collision).
     Checks remaining rolls, extra rolls, or ends turn.
     """
+    # Check win condition before any turn transition
+    win_result = _check_and_handle_win(state, events)
+    if win_result is not None:
+        return win_result
+
     current_turn = state.current_turn
     if current_turn is None:
         return ProcessResult.failure("NO_ACTIVE_TURN", "Turn lost during capture choice")
@@ -784,26 +796,72 @@ def handle_homestretch_stacking(
     """Check for and handle same-player stacking on the HOMESTRETCH.
 
     Homestretch is per-player, so only same-player merges are possible.
-    Two stacks from the same player at the same progress merge.
+    Stacks from the same player at the same progress merge. If multiple
+    stacks occupy the same position, they are merged iteratively.
     """
-    for stack in player.stacks:
-        if stack.stack_id == moved_piece.stack_id:
-            continue
-        if stack.state != StackState.HOMESTRETCH:
-            continue
-        if stack.progress != moved_piece.progress:
-            continue
+    merged = False
+    while True:
+        found = False
+        # Re-fetch player from state after each merge
+        current_player = next(p for p in state.players if p.player_id == player.player_id)
+        for stack in current_player.stacks:
+            if stack.stack_id == moved_piece.stack_id:
+                continue
+            if stack.state != StackState.HOMESTRETCH:
+                continue
+            if stack.progress != moved_piece.progress:
+                continue
 
-        logger.info(
-            "Homestretch stacking: %s merges with %s at progress=%d",
-            moved_piece.stack_id,
-            stack.stack_id,
-            moved_piece.progress,
+            logger.info(
+                "Homestretch stacking: %s merges with %s at progress=%d",
+                moved_piece.stack_id,
+                stack.stack_id,
+                moved_piece.progress,
+            )
+            result = resolve_stacking(state, current_player, moved_piece, stack)
+            if result.state is not None:
+                state = result.state
+            events.extend(result.events)
+
+            # Update moved_piece to the newly merged stack for the next iteration
+            updated_player = next(p for p in state.players if p.player_id == player.player_id)
+            moved_piece = next(
+                s for s in updated_player.stacks
+                if s.progress == moved_piece.progress and s.state == StackState.HOMESTRETCH
+            )
+            merged = True
+            found = True
+            break  # Restart the loop with updated state
+
+        if not found:
+            break
+
+    return ProcessResult.ok(state, events) if merged else None
+
+
+def _check_and_handle_win(
+    state: GameState,
+    events: list[AnyGameEvent],
+) -> ProcessResult | None:
+    """Check if any player has won and handle game end.
+
+    Returns ProcessResult with GameEnded event and FINISHED phase if a
+    winner is found, or None if no winner yet.
+    """
+    from .process import check_win_condition
+
+    winner_id = check_win_condition(state)
+    if winner_id is None:
+        return None
+
+    logger.info("Game won by player=%s, ending game", winner_id)
+    events.append(
+        GameEnded(
+            winner_id=winner_id,
+            final_rankings=[winner_id],
         )
-        result = resolve_stacking(state, player, moved_piece, stack)
-        if result.state is not None:
-            state = result.state
-        events.extend(result.events)
-        return ProcessResult.ok(state, events)
-
-    return None
+    )
+    new_state = state.model_copy(
+        update={"phase": GamePhase.FINISHED}
+    )
+    return ProcessResult.ok(new_state, events)

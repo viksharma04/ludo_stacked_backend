@@ -99,7 +99,7 @@ class StackUpdate(GameEvent):
     player_id: UUID
     add_stacks: list["Stack"] = Field(default_factory=list, description="New stacks formed")
     remove_stacks: list["Stack"] = Field(
-        default_factory=list, description="Stack IDs that were dissolved"
+        default_factory=list, description="Stacks that were dissolved"
     )
 
 

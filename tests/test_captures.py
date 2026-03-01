@@ -23,7 +23,7 @@ from app.schemas.game_engine import (
     Turn,
 )
 from app.services.game.engine import MoveAction, RollAction, process_action
-from app.services.game.engine.events import StackCaptured
+from app.services.game.engine.events import StackCaptured, StackUpdate
 
 from .conftest import (
     PLAYER_1_ID,
@@ -447,10 +447,180 @@ class TestStackCaptures:
         assert p2_stack.state == StackState.ROAD
 
 
-# TODO: Good to have tests
-# class TestCaptureChains:
-#     """Test capture leading to another capture opportunity."""
-#
-#     def test_extra_roll_from_capture_can_capture_again(self):
-#         """Extra roll from capture can be used to capture another opponent."""
-#         pass
+class TestMultiHeightCaptureDecomposition:
+    """Test that capturing a multi-height stack emits StackUpdate for decomposition."""
+
+    def test_capturing_height_2_emits_stack_update_for_decomposition(self):
+        """Capturing a height-2 stack should emit StackUpdate showing decomposition
+        into individual stacks in HELL."""
+        # Player 1 has height-2 stack at progress 5, capturing player 2's height-2 stack
+        player1_stacks = [
+            create_stack("stack_1_2", StackState.ROAD, 2, 3),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player1 = create_player(
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
+            stacks=player1_stacks,
+        )
+
+        # Player 2 has height-2 stack at abs pos 5: (26 + progress) % 50 = 5 => progress = 29
+        player2_stacks = [
+            create_stack("stack_1_2", StackState.ROAD, 2, 29),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player2 = create_player(
+            player_id=PLAYER_2_ID,
+            name="Player 2",
+            color="blue",
+            turn_order=2,
+            abs_starting_index=26,
+            stacks=player2_stacks,
+        )
+
+        board_setup = BoardSetup(
+            squares_to_win=55,
+            squares_to_homestretch=50,
+            starting_positions=[0, 26],
+            safe_spaces=[0, 26],
+            get_out_rolls=[6],
+        )
+
+        turn = Turn(
+            player_id=PLAYER_1_ID,
+            initial_roll=True,
+            rolls_to_allocate=[],
+            legal_moves=[],
+            current_turn_order=1,
+            extra_rolls=0,
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player1, player2],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=board_setup,
+            current_turn=turn,
+        )
+
+        # Roll 4: stack_1_2 (height 2, 4/2=2) moves from 3 to 5, landing on P2's stack
+        result = process_action(state, RollAction(value=4), PLAYER_1_ID)
+        assert result.success
+        state = result.state
+
+        result = process_action(
+            state, MoveAction(stack_id="stack_1_2", roll_value=4), PLAYER_1_ID
+        )
+        assert result.success
+
+        # StackCaptured event should exist
+        capture_event = next(
+            (e for e in result.events if isinstance(e, StackCaptured)), None
+        )
+        assert capture_event is not None
+
+        # StackUpdate should be emitted for the decomposition of the captured stack
+        update_events = [e for e in result.events if isinstance(e, StackUpdate)]
+        decomp_event = next(
+            (e for e in update_events if e.player_id == PLAYER_2_ID), None
+        )
+        assert decomp_event is not None, (
+            "StackUpdate should be emitted for captured player's stack decomposition"
+        )
+
+        # remove_stacks should contain the captured composite stack
+        removed_ids = {s.stack_id for s in decomp_event.remove_stacks}
+        assert "stack_1_2" in removed_ids
+
+        # add_stacks should contain the individual component stacks in HELL
+        added_ids = {s.stack_id for s in decomp_event.add_stacks}
+        assert "stack_1" in added_ids
+        assert "stack_2" in added_ids
+        for added_stack in decomp_event.add_stacks:
+            assert added_stack.state == StackState.HELL
+            assert added_stack.height == 1
+            assert added_stack.progress == 0
+
+    def test_capturing_height_1_no_decomposition_event(self):
+        """Capturing a height-1 stack should NOT emit a StackUpdate for decomposition
+        since there is nothing to decompose."""
+        player1_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 5),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player1 = create_player(
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
+            stacks=player1_stacks,
+        )
+
+        # Player 2 at abs position 8: (26 + progress) % 50 = 8 => progress = 32
+        player2_stacks = [
+            create_stack("stack_1", StackState.ROAD, 1, 32),
+            create_stack("stack_2", StackState.HELL, 1, 0),
+            create_stack("stack_3", StackState.HELL, 1, 0),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        player2 = create_player(
+            player_id=PLAYER_2_ID,
+            name="Player 2",
+            color="blue",
+            turn_order=2,
+            abs_starting_index=26,
+            stacks=player2_stacks,
+        )
+
+        board_setup = BoardSetup(
+            squares_to_win=55,
+            squares_to_homestretch=50,
+            starting_positions=[0, 26],
+            safe_spaces=[0, 26],
+            get_out_rolls=[6],
+        )
+
+        turn = Turn(
+            player_id=PLAYER_1_ID,
+            initial_roll=True,
+            rolls_to_allocate=[],
+            legal_moves=[],
+            current_turn_order=1,
+            extra_rolls=0,
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player1, player2],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=board_setup,
+            current_turn=turn,
+        )
+
+        # Roll 3: stack_1 moves from 5 to 8, landing on P2's stack
+        result = process_action(state, RollAction(value=3), PLAYER_1_ID)
+        assert result.success
+        state = result.state
+
+        result = process_action(
+            state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID
+        )
+        assert result.success
+
+        # StackCaptured should exist
+        assert any(isinstance(e, StackCaptured) for e in result.events)
+
+        # No StackUpdate for the captured player (height 1 has no decomposition)
+        update_events = [
+            e for e in result.events
+            if isinstance(e, StackUpdate) and e.player_id == PLAYER_2_ID
+        ]
+        assert len(update_events) == 0, (
+            "No StackUpdate should be emitted for height-1 capture (no decomposition)"
+        )

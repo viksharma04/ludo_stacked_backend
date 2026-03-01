@@ -95,6 +95,38 @@ class TestThreeSixesPenalty:
         assert state.current_turn.player_id == PLAYER_2_ID
         assert state.current_turn.rolls_to_allocate == []
 
+    def test_three_sixes_emits_dice_rolled_for_third_roll(self, game_player1_turn: GameState):
+        """The third six that triggers the penalty must still emit a DiceRolled event.
+
+        The frontend needs to know the dice value before seeing the penalty,
+        so DiceRolled must appear before ThreeSixesPenalty in the events list.
+        """
+        state = game_player1_turn
+
+        # Roll first 6
+        result = process_action(state, RollAction(value=6), PLAYER_1_ID)
+        state = result.state
+
+        # Roll second 6
+        result = process_action(state, RollAction(value=6), PLAYER_1_ID)
+        state = result.state
+
+        # Roll third 6 - triggers penalty
+        result = process_action(state, RollAction(value=6), PLAYER_1_ID)
+        assert result.success
+
+        # DiceRolled MUST be emitted for the third roll
+        dice_events = [e for e in result.events if isinstance(e, DiceRolled)]
+        assert len(dice_events) == 1, "Third six must emit a DiceRolled event"
+        assert dice_events[0].value == 6
+        assert dice_events[0].roll_number == 3
+
+        # DiceRolled must appear BEFORE ThreeSixesPenalty
+        event_types = [e.event_type for e in result.events]
+        dice_idx = event_types.index("dice_rolled")
+        penalty_idx = event_types.index("three_sixes_penalty")
+        assert dice_idx < penalty_idx, "DiceRolled must come before ThreeSixesPenalty"
+
 
 class TestNoLegalMoves:
     """Test scenarios where player has no legal moves."""

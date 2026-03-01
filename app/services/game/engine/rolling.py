@@ -99,6 +99,14 @@ def process_roll(state: GameState, roll_value: int, player_id: UUID) -> ProcessR
             str(player_id)[:8],
             new_rolls[-3:],
         )
+        events.append(
+            DiceRolled(
+                player_id=player_id,
+                value=roll_value,
+                roll_number=roll_number,
+                grants_extra_roll=False,
+            )
+        )
         events.append(ThreeSixesPenalty(player_id=player_id, rolls=new_rolls[-3:]))
 
         next_turn_order = get_next_turn_order(current_turn.current_turn_order, len(state.players))

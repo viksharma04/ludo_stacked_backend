@@ -119,25 +119,3 @@ def get_all_legal_moves_flat(
                 seen.add(move_id)
                 result.append(move_id)
     return result
-
-
-def has_any_legal_moves(player: Player, roll: int, board_setup: BoardSetup) -> bool:
-    """Quick check if player has any legal moves."""
-    for stack in player.stacks:
-        if stack.state == StackState.HELL and roll in board_setup.get_out_rolls:
-            return True
-
-        if stack.state in (StackState.ROAD, StackState.HOMESTRETCH):
-            if roll % stack.height == 0:
-                effective_roll = roll // stack.height
-                if stack.progress + effective_roll <= board_setup.squares_to_win:
-                    return True
-
-            if stack.height > 1:
-                for partial_count in range(1, stack.height):
-                    if roll % partial_count == 0:
-                        effective_roll = roll // partial_count
-                        if stack.progress + effective_roll <= board_setup.squares_to_win:
-                            return True
-
-    return False

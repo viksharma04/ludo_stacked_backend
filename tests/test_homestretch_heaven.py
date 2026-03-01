@@ -10,8 +10,6 @@ Critical scenarios tested:
 - Win condition (all stacks in HEAVEN)
 """
 
-import pytest
-
 from app.schemas.game_engine import (
     BoardSetup,
     CurrentEvent,
@@ -343,6 +341,44 @@ class TestHomestretchStacking:
 
         merged_stack = next(s for s in updated_player.stacks if s.stack_id == "stack_1_2")
         assert merged_stack.height == 2
+        assert merged_stack.progress == 51
+        assert merged_stack.state == StackState.HOMESTRETCH
+
+    def test_three_stacks_merge_on_homestretch(self, standard_board_setup: BoardSetup):
+        """Three stacks at the same homestretch progress should all merge.
+
+        Player has stack_1 and stack_3 at HOMESTRETCH progress=51,
+        and stack_2 at HOMESTRETCH progress=50. Roll=1 moves stack_2
+        to progress=51, landing on both stack_1 and stack_3.
+        All three should merge into stack_1_2_3.
+        """
+        player1_stacks = [
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 51),
+            create_stack("stack_2", StackState.HOMESTRETCH, 1, 50),
+            create_stack("stack_3", StackState.HOMESTRETCH, 1, 51),
+            create_stack("stack_4", StackState.HELL, 1, 0),
+        ]
+        state = _make_two_player_state(player1_stacks, standard_board_setup)
+
+        # Roll 1
+        result = process_action(state, RollAction(value=1), PLAYER_1_ID)
+        assert result.success
+        state = result.state
+
+        # Move stack_2 from progress 50 to 51 (landing on stack_1 and stack_3)
+        result = process_action(state, MoveAction(stack_id="stack_2", roll_value=1), PLAYER_1_ID)
+        assert result.success
+
+        # Verify final state: all three stacks merged into stack_1_2_3
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
+        stack_ids = {s.stack_id for s in updated_player.stacks}
+        assert "stack_1_2_3" in stack_ids, f"Expected stack_1_2_3 but got {stack_ids}"
+        assert "stack_1" not in stack_ids
+        assert "stack_2" not in stack_ids
+        assert "stack_3" not in stack_ids
+
+        merged_stack = next(s for s in updated_player.stacks if s.stack_id == "stack_1_2_3")
+        assert merged_stack.height == 3
         assert merged_stack.progress == 51
         assert merged_stack.state == StackState.HOMESTRETCH
 

@@ -22,7 +22,7 @@ from app.schemas.game_engine import (
     Turn,
 )
 from app.services.game.engine import MoveAction, RollAction, process_action
-from app.services.game.engine.events import StackReachedHeaven
+from app.services.game.engine.events import GameEnded, StackReachedHeaven
 
 from .conftest import (
     PLAYER_1_ID,
@@ -274,28 +274,236 @@ class TestAllStacksInHeaven:
         assert all(s.state == StackState.HEAVEN for s in player1.stacks)
 
 
-# TODO: Good to have tests
-# class TestGameEndedEvent:
-#     """Test GameEnded event and final rankings."""
-#
-#     def test_game_ended_event_has_winner(self):
-#         """GameEnded event should include winner_id."""
-#         pass
-#
-#     def test_game_ended_event_has_rankings(self):
-#         """GameEnded event should include final_rankings in finish order."""
-#         pass
-#
-# class TestMultiplayerFinish:
-#     """Test game continuation after one player finishes."""
-#
-#     def test_game_continues_after_one_player_wins(self):
-#         """Game should continue for remaining players after one wins."""
-#         pass
-#
-# class TestStackReachingHeaven:
-#     """Test stacks reaching heaven."""
-#
-#     def test_stack_reaching_heaven_finishes_all_pieces(self):
-#         """All pieces in a stack should finish when stack reaches heaven."""
-#         pass
+class TestGameEndedEvent:
+    """Test GameEnded event emission and game phase transition on win."""
+
+    def test_game_ended_event_emitted_when_last_stack_reaches_heaven(
+        self, two_player_board_setup: BoardSetup
+    ):
+        """When a player's last stack reaches heaven, GameEnded should be emitted
+        and game phase should transition to FINISHED."""
+        player1_stacks = [
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 53),  # Needs 2
+            create_stack("stack_2", StackState.HEAVEN, 1, 55),
+            create_stack("stack_3", StackState.HEAVEN, 1, 55),
+            create_stack("stack_4", StackState.HEAVEN, 1, 55),
+        ]
+        player1 = create_player(
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
+            stacks=player1_stacks,
+        )
+        player2 = create_player(
+            player_id=PLAYER_2_ID,
+            name="Player 2",
+            color="blue",
+            turn_order=2,
+            abs_starting_index=26,
+        )
+
+        turn = Turn(
+            player_id=PLAYER_1_ID,
+            initial_roll=True,
+            rolls_to_allocate=[],
+            legal_moves=[],
+            current_turn_order=1,
+            extra_rolls=0,
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player1, player2],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=two_player_board_setup,
+            current_turn=turn,
+        )
+
+        # Roll 2 and move last stack to heaven
+        result = process_action(state, RollAction(value=2), PLAYER_1_ID)
+        state = result.state
+
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID)
+        assert result.success
+
+        # GameEnded event should be emitted
+        game_ended = next(
+            (e for e in result.events if isinstance(e, GameEnded)), None
+        )
+        assert game_ended is not None, "GameEnded event should be emitted when player wins"
+        assert game_ended.winner_id == PLAYER_1_ID
+        assert PLAYER_1_ID in game_ended.final_rankings
+
+        # Game phase should be FINISHED
+        assert result.state.phase == GamePhase.FINISHED
+
+    def test_game_ended_no_turn_transition_after_win(
+        self, two_player_board_setup: BoardSetup
+    ):
+        """After a win, no TurnEnded/TurnStarted events should follow GameEnded."""
+        player1_stacks = [
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 53),
+            create_stack("stack_2", StackState.HEAVEN, 1, 55),
+            create_stack("stack_3", StackState.HEAVEN, 1, 55),
+            create_stack("stack_4", StackState.HEAVEN, 1, 55),
+        ]
+        player1 = create_player(
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
+            stacks=player1_stacks,
+        )
+        player2 = create_player(
+            player_id=PLAYER_2_ID,
+            name="Player 2",
+            color="blue",
+            turn_order=2,
+            abs_starting_index=26,
+        )
+
+        turn = Turn(
+            player_id=PLAYER_1_ID,
+            initial_roll=True,
+            rolls_to_allocate=[],
+            legal_moves=[],
+            current_turn_order=1,
+            extra_rolls=0,
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player1, player2],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=two_player_board_setup,
+            current_turn=turn,
+        )
+
+        result = process_action(state, RollAction(value=2), PLAYER_1_ID)
+        state = result.state
+
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID)
+        assert result.success
+
+        # No TurnStarted or RollGranted events should appear after GameEnded
+        event_types = [e.event_type for e in result.events]
+        assert "turn_started" not in event_types
+        assert "roll_granted" not in event_types
+        assert "turn_ended" not in event_types
+
+    def test_game_ended_with_merged_stack_reaching_heaven(
+        self, two_player_board_setup: BoardSetup
+    ):
+        """A merged stack (height 2) reaching heaven with all pieces should end the game."""
+        # Player 1 has stack_1_2 (contains 2 pieces) in homestretch + stack_3, stack_4 in heaven
+        # When stack_1_2 reaches heaven, all 4 original pieces are in heaven -> game ends
+        player1_stacks = [
+            create_stack("stack_1_2", StackState.HOMESTRETCH, 2, 53),  # Needs 4/2=2 effective
+            create_stack("stack_3", StackState.HEAVEN, 1, 55),
+            create_stack("stack_4", StackState.HEAVEN, 1, 55),
+        ]
+        player1 = create_player(
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
+            stacks=player1_stacks,
+        )
+        player2 = create_player(
+            player_id=PLAYER_2_ID,
+            name="Player 2",
+            color="blue",
+            turn_order=2,
+            abs_starting_index=26,
+        )
+
+        turn = Turn(
+            player_id=PLAYER_1_ID,
+            initial_roll=True,
+            rolls_to_allocate=[],
+            legal_moves=[],
+            current_turn_order=1,
+            extra_rolls=0,
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player1, player2],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=two_player_board_setup,
+            current_turn=turn,
+        )
+
+        # Roll 4: effective = 4/2 = 2, 53 + 2 = 55 = squares_to_win
+        result = process_action(state, RollAction(value=4), PLAYER_1_ID)
+        state = result.state
+
+        result = process_action(
+            state, MoveAction(stack_id="stack_1_2", roll_value=4), PLAYER_1_ID
+        )
+        assert result.success
+
+        # GameEnded should be emitted
+        game_ended = next(
+            (e for e in result.events if isinstance(e, GameEnded)), None
+        )
+        assert game_ended is not None, "GameEnded event should be emitted"
+        assert game_ended.winner_id == PLAYER_1_ID
+        assert result.state.phase == GamePhase.FINISHED
+
+    def test_no_game_ended_when_stacks_still_on_board(
+        self, two_player_board_setup: BoardSetup
+    ):
+        """GameEnded should NOT be emitted when some stacks are still playing."""
+        player1_stacks = [
+            create_stack("stack_1", StackState.HOMESTRETCH, 1, 53),
+            create_stack("stack_2", StackState.HEAVEN, 1, 55),
+            create_stack("stack_3", StackState.HEAVEN, 1, 55),
+            create_stack("stack_4", StackState.ROAD, 1, 10),  # Still on road
+        ]
+        player1 = create_player(
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
+            stacks=player1_stacks,
+        )
+        player2 = create_player(
+            player_id=PLAYER_2_ID,
+            name="Player 2",
+            color="blue",
+            turn_order=2,
+            abs_starting_index=26,
+        )
+
+        turn = Turn(
+            player_id=PLAYER_1_ID,
+            initial_roll=True,
+            rolls_to_allocate=[],
+            legal_moves=[],
+            current_turn_order=1,
+            extra_rolls=0,
+        )
+        state = GameState(
+            phase=GamePhase.IN_PROGRESS,
+            players=[player1, player2],
+            current_event=CurrentEvent.PLAYER_ROLL,
+            board_setup=two_player_board_setup,
+            current_turn=turn,
+        )
+
+        # Roll 2 and move stack_1 to heaven (but stack_4 is still on road)
+        result = process_action(state, RollAction(value=2), PLAYER_1_ID)
+        state = result.state
+
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID)
+        assert result.success
+
+        # GameEnded should NOT be emitted
+        game_ended = next(
+            (e for e in result.events if isinstance(e, GameEnded)), None
+        )
+        assert game_ended is None, "GameEnded should not be emitted with stacks still playing"
+        assert result.state.phase == GamePhase.IN_PROGRESS

@@ -314,6 +314,26 @@ def resolve_capture(
             )
         )
 
+        # Emit StackUpdate for multi-height decomposition
+        if captured_size > 1:
+            components = parse_components(captured_piece.stack_id)
+            hell_stacks = [
+                Stack(
+                    stack_id=f"stack_{c}",
+                    state=StackState.HELL,
+                    height=1,
+                    progress=0,
+                )
+                for c in components
+            ]
+            new_events.append(
+                StackUpdate(
+                    player_id=captured_player.player_id,
+                    remove_stacks=[captured_piece],
+                    add_stacks=hell_stacks,
+                )
+            )
+
         # Grant extra rolls based on captured stack's height
         logger.info(
             "Granting %d extra rolls for capture",

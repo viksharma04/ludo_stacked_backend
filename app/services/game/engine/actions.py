@@ -26,7 +26,7 @@ class CaptureChoiceAction(BaseModel):
     action_type: Literal["capture_choice"] = "capture_choice"
     choice: str = Field(
         ...,
-        description="Capture resolution choice: 'stack', 'capture', or specific target ID",
+        description="Capture target in 'player_id:stack_id' format",
     )
 
 
