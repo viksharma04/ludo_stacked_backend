@@ -41,7 +41,7 @@ from .stack_utils import find_parent_stack, get_split_result, parse_components
 from .validation import ProcessResult
 
 
-def process_move(state: GameState, stack_id: str, roll_value: int | None, player_id: UUID) -> ProcessResult:
+def process_move(state: GameState, stack_id: str, roll_value: int, player_id: UUID) -> ProcessResult:
     """Process a player's move selection.
 
     Determines whether this is a full stack move or a split move,
@@ -50,7 +50,7 @@ def process_move(state: GameState, stack_id: str, roll_value: int | None, player
     Args:
         state: Current game state.
         stack_id: ID of stack (or sub-stack) to move.
-        roll_value: Specific roll to use, or None for legacy FIFO fallback.
+        roll_value: Which roll value to consume from rolls_to_allocate.
         player_id: The player making the move.
 
     Returns:
@@ -66,16 +66,12 @@ def process_move(state: GameState, stack_id: str, roll_value: int | None, player
         return ProcessResult.failure("NO_ROLLS", "No rolls to allocate")
 
     # Determine which roll to use
-    if roll_value is not None:
-        if roll_value not in current_turn.rolls_to_allocate:
-            return ProcessResult.failure(
-                "INVALID_ROLL",
-                f"Roll {roll_value} is not in rolls_to_allocate",
-            )
-        roll = roll_value
-    else:
-        # Legacy fallback: use first roll (for tests not yet updated)
-        roll = current_turn.rolls_to_allocate[0]
+    if roll_value not in current_turn.rolls_to_allocate:
+        return ProcessResult.failure(
+            "INVALID_ROLL",
+            f"Roll {roll_value} is not in rolls_to_allocate",
+        )
+    roll = roll_value
 
     # Find the current player
     current_player = next(p for p in state.players if p.player_id == current_turn.player_id)

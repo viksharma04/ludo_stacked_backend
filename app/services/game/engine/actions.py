@@ -19,8 +19,8 @@ class MoveAction(BaseModel):
     stack_id: str = Field(
         ..., description="ID of the stack to move"
     )
-    roll_value: int | None = Field(
-        None, description="Which roll to consume (required for multi-roll)"
+    roll_value: int = Field(
+        ..., description="Which roll value to consume from rolls_to_allocate"
     )
 
 

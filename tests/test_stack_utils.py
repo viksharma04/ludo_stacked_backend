@@ -258,9 +258,10 @@ class TestLegalMoveGroup:
 class TestMoveActionField:
     def test_move_action_has_stack_id(self):
         from app.services.game.engine.actions import MoveAction
-        action = MoveAction(stack_id="stack_1_2")
+        action = MoveAction(stack_id="stack_1_2", roll_value=3)
         assert action.stack_id == "stack_1_2"
         assert action.action_type == "move"
+        assert action.roll_value == 3
 
 
 # ---------------------------------------------------------------------------
