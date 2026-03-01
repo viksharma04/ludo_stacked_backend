@@ -10,8 +10,6 @@ Critical scenarios tested:
 - Win condition (all stacks in HEAVEN)
 """
 
-from uuid import UUID
-
 import pytest
 
 from app.schemas.game_engine import (
@@ -19,7 +17,6 @@ from app.schemas.game_engine import (
     CurrentEvent,
     GamePhase,
     GameState,
-    Player,
     Stack,
     StackState,
     Turn,
@@ -27,13 +24,12 @@ from app.schemas.game_engine import (
 from app.services.game.engine.actions import MoveAction, RollAction
 from app.services.game.engine.captures import detect_collisions
 from app.services.game.engine.events import (
-    AwaitingChoice,
     StackMoved,
     StackReachedHeaven,
     StackUpdate,
 )
 from app.services.game.engine.legal_moves import get_legal_moves
-from app.services.game.engine.movement import apply_split_move, apply_stack_move
+from app.services.game.engine.movement import apply_stack_move
 from app.services.game.engine.process import check_win_condition, process_action
 
 from .conftest import (
@@ -43,7 +39,6 @@ from .conftest import (
     create_stack,
     create_stacks_in_hell,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -119,17 +114,13 @@ class TestHomestretchEntry:
         )
 
         assert result.success
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_1_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
         stack = next(s for s in updated_player.stacks if s.stack_id == "stack_1")
         assert stack.progress == 50
         assert stack.state == StackState.HOMESTRETCH
 
         # Verify StackMoved event records the transition
-        moved = next(
-            (e for e in result.events if isinstance(e, StackMoved)), None
-        )
+        moved = next((e for e in result.events if isinstance(e, StackMoved)), None)
         assert moved is not None
         assert moved.from_state == StackState.ROAD
         assert moved.to_state == StackState.HOMESTRETCH
@@ -155,9 +146,7 @@ class TestHomestretchEntry:
         )
 
         assert result.success
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_1_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
         stack = next(s for s in updated_player.stacks if s.stack_id == "stack_1")
         assert stack.progress == 49
         assert stack.state == StackState.ROAD
@@ -183,9 +172,7 @@ class TestHomestretchEntry:
         )
 
         assert result.success
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_1_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
         stack = next(s for s in updated_player.stacks if s.stack_id == "stack_1")
         assert stack.progress == 53
         assert stack.state == StackState.HOMESTRETCH
@@ -222,25 +209,19 @@ class TestReachingHeaven:
         assert result.success
 
         # Stack should be in HEAVEN
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_1_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
         stack = next(s for s in updated_player.stacks if s.stack_id == "stack_1")
         assert stack.state == StackState.HEAVEN
         assert stack.progress == 55
 
         # StackReachedHeaven event should be emitted
-        heaven_event = next(
-            (e for e in result.events if isinstance(e, StackReachedHeaven)), None
-        )
+        heaven_event = next((e for e in result.events if isinstance(e, StackReachedHeaven)), None)
         assert heaven_event is not None
         assert heaven_event.player_id == PLAYER_1_ID
         assert heaven_event.stack_id == "stack_1"
 
         # StackMoved event should also be emitted with correct states
-        moved = next(
-            (e for e in result.events if isinstance(e, StackMoved)), None
-        )
+        moved = next((e for e in result.events if isinstance(e, StackMoved)), None)
         assert moved is not None
         assert moved.from_state == StackState.HOMESTRETCH
         assert moved.to_state == StackState.HEAVEN
@@ -345,9 +326,7 @@ class TestHomestretchStacking:
         assert result.success
 
         # Verify StackUpdate event shows merge
-        update_event = next(
-            (e for e in result.events if isinstance(e, StackUpdate)), None
-        )
+        update_event = next((e for e in result.events if isinstance(e, StackUpdate)), None)
         assert update_event is not None
         assert update_event.player_id == PLAYER_1_ID
 
@@ -361,17 +340,13 @@ class TestHomestretchStacking:
         assert "stack_2" in removed_ids
 
         # Verify final state
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_1_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
         stack_ids = {s.stack_id for s in updated_player.stacks}
         assert "stack_1_2" in stack_ids
         assert "stack_1" not in stack_ids
         assert "stack_2" not in stack_ids
 
-        merged_stack = next(
-            s for s in updated_player.stacks if s.stack_id == "stack_1_2"
-        )
+        merged_stack = next(s for s in updated_player.stacks if s.stack_id == "stack_1_2")
         assert merged_stack.height == 2
         assert merged_stack.progress == 51
         assert merged_stack.state == StackState.HOMESTRETCH
@@ -396,17 +371,13 @@ class TestHomestretchStacking:
         )
 
         assert result.success
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_1_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
         stack = next(s for s in updated_player.stacks if s.stack_id == "stack_1_2")
         assert stack.progress == 53  # 51 + 4/2 = 53
         assert stack.state == StackState.HOMESTRETCH
 
         # Verify StackMoved event
-        moved = next(
-            (e for e in result.events if isinstance(e, StackMoved)), None
-        )
+        moved = next((e for e in result.events if isinstance(e, StackMoved)), None)
         assert moved is not None
         assert moved.from_progress == 51
         assert moved.to_progress == 53
@@ -442,16 +413,10 @@ class TestHomestretchPrivacy:
             player1_stacks, standard_board_setup, player2_stacks=player2_stacks
         )
 
-        moving_player = next(
-            p for p in state.players if p.player_id == PLAYER_1_ID
-        )
-        moved_piece = next(
-            s for s in moving_player.stacks if s.stack_id == "stack_1"
-        )
+        moving_player = next(p for p in state.players if p.player_id == PLAYER_1_ID)
+        moved_piece = next(s for s in moving_player.stacks if s.stack_id == "stack_1")
 
-        collisions = detect_collisions(
-            state, moved_piece, moving_player, standard_board_setup
-        )
+        collisions = detect_collisions(state, moved_piece, moving_player, standard_board_setup)
 
         assert collisions == []
 

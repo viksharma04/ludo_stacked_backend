@@ -331,18 +331,28 @@ class TestThreeWayMerge:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         player1 = create_player(
-            player_id=PLAYER_1_ID, name="Player 1", color="red",
-            turn_order=1, abs_starting_index=0, stacks=player1_stacks,
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
+            stacks=player1_stacks,
         )
         player2 = create_player(
-            player_id=PLAYER_2_ID, name="Player 2", color="blue",
-            turn_order=2, abs_starting_index=26,
+            player_id=PLAYER_2_ID,
+            name="Player 2",
+            color="blue",
+            turn_order=2,
+            abs_starting_index=26,
         )
 
         turn = Turn(
-            player_id=PLAYER_1_ID, initial_roll=True,
-            rolls_to_allocate=[], legal_moves=[],
-            current_turn_order=1, extra_rolls=0,
+            player_id=PLAYER_1_ID,
+            initial_roll=True,
+            rolls_to_allocate=[],
+            legal_moves=[],
+            current_turn_order=1,
+            extra_rolls=0,
         )
         state = GameState(
             phase=GamePhase.IN_PROGRESS,
@@ -385,18 +395,28 @@ class TestMaxStackSize:
             create_stack("stack_4", StackState.ROAD, 1, 16),
         ]
         player1 = create_player(
-            player_id=PLAYER_1_ID, name="Player 1", color="red",
-            turn_order=1, abs_starting_index=0, stacks=player1_stacks,
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
+            stacks=player1_stacks,
         )
         player2 = create_player(
-            player_id=PLAYER_2_ID, name="Player 2", color="blue",
-            turn_order=2, abs_starting_index=26,
+            player_id=PLAYER_2_ID,
+            name="Player 2",
+            color="blue",
+            turn_order=2,
+            abs_starting_index=26,
         )
 
         turn = Turn(
-            player_id=PLAYER_1_ID, initial_roll=True,
-            rolls_to_allocate=[], legal_moves=[],
-            current_turn_order=1, extra_rolls=0,
+            player_id=PLAYER_1_ID,
+            initial_roll=True,
+            rolls_to_allocate=[],
+            legal_moves=[],
+            current_turn_order=1,
+            extra_rolls=0,
         )
         state = GameState(
             phase=GamePhase.IN_PROGRESS,
@@ -428,8 +448,12 @@ class TestMaxStackSize:
             create_stack("stack_1_2_3_4", StackState.ROAD, 4, 20),
         ]
         player1 = create_player(
-            player_id=PLAYER_1_ID, name="Player 1", color="red",
-            turn_order=1, abs_starting_index=0, stacks=player1_stacks,
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
+            stacks=player1_stacks,
         )
 
         board = two_player_board_setup
@@ -471,18 +495,28 @@ class TestSplitThenRemerge:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         player1 = create_player(
-            player_id=PLAYER_1_ID, name="Player 1", color="red",
-            turn_order=1, abs_starting_index=0, stacks=player1_stacks,
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
+            stacks=player1_stacks,
         )
         player2 = create_player(
-            player_id=PLAYER_2_ID, name="Player 2", color="blue",
-            turn_order=2, abs_starting_index=26,
+            player_id=PLAYER_2_ID,
+            name="Player 2",
+            color="blue",
+            turn_order=2,
+            abs_starting_index=26,
         )
 
         turn = Turn(
-            player_id=PLAYER_1_ID, initial_roll=True,
-            rolls_to_allocate=[], legal_moves=[],
-            current_turn_order=1, extra_rolls=0,
+            player_id=PLAYER_1_ID,
+            initial_roll=True,
+            rolls_to_allocate=[],
+            legal_moves=[],
+            current_turn_order=1,
+            extra_rolls=0,
         )
         state = GameState(
             phase=GamePhase.IN_PROGRESS,
@@ -521,12 +555,19 @@ class TestCapturedStackRebuilt:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         player2 = create_player(
-            player_id=PLAYER_2_ID, name="Player 2", color="blue",
-            turn_order=2, abs_starting_index=26, stacks=player2_stacks,
+            player_id=PLAYER_2_ID,
+            name="Player 2",
+            color="blue",
+            turn_order=2,
+            abs_starting_index=26,
+            stacks=player2_stacks,
         )
         player1 = create_player(
-            player_id=PLAYER_1_ID, name="Player 1", color="red",
-            turn_order=1, abs_starting_index=0,
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
         )
 
         state = GameState(
@@ -561,18 +602,28 @@ class TestSplitStackEventOrdering:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         player1 = create_player(
-            player_id=PLAYER_1_ID, name="Player 1", color="red",
-            turn_order=1, abs_starting_index=0, stacks=player1_stacks,
+            player_id=PLAYER_1_ID,
+            name="Player 1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
+            stacks=player1_stacks,
         )
         player2 = create_player(
-            player_id=PLAYER_2_ID, name="Player 2", color="blue",
-            turn_order=2, abs_starting_index=26,
+            player_id=PLAYER_2_ID,
+            name="Player 2",
+            color="blue",
+            turn_order=2,
+            abs_starting_index=26,
         )
 
         turn = Turn(
-            player_id=PLAYER_1_ID, initial_roll=True,
-            rolls_to_allocate=[], legal_moves=[],
-            current_turn_order=1, extra_rolls=0,
+            player_id=PLAYER_1_ID,
+            initial_roll=True,
+            rolls_to_allocate=[],
+            legal_moves=[],
+            current_turn_order=1,
+            extra_rolls=0,
         )
         state = GameState(
             phase=GamePhase.IN_PROGRESS,

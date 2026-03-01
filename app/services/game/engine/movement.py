@@ -41,7 +41,9 @@ from .stack_utils import find_parent_stack, get_split_result, parse_components
 from .validation import ProcessResult
 
 
-def process_move(state: GameState, stack_id: str, roll_value: int, player_id: UUID) -> ProcessResult:
+def process_move(
+    state: GameState, stack_id: str, roll_value: int, player_id: UUID
+) -> ProcessResult:
     """Process a player's move selection.
 
     Determines whether this is a full stack move or a split move,
@@ -84,9 +86,7 @@ def process_move(state: GameState, stack_id: str, roll_value: int, player_id: UU
     )
 
     # Exact match check: does the player own a stack with this exact stack_id?
-    exact_stack = next(
-        (s for s in current_player.stacks if s.stack_id == stack_id), None
-    )
+    exact_stack = next((s for s in current_player.stacks if s.stack_id == stack_id), None)
 
     if exact_stack is not None:
         result = apply_stack_move(
@@ -134,9 +134,7 @@ def process_move(state: GameState, stack_id: str, roll_value: int, player_id: UU
     if result.state.current_event == CurrentEvent.CAPTURE_CHOICE:
         remaining = list(current_turn.rolls_to_allocate)
         remaining.remove(roll)
-        updated_turn = result.state.current_turn.model_copy(
-            update={"rolls_to_allocate": remaining}
-        )
+        updated_turn = result.state.current_turn.model_copy(update={"rolls_to_allocate": remaining})
         final_state = result.state.model_copy(update={"current_turn": updated_turn})
         return ProcessResult.ok(final_state, result.events)
 
@@ -268,9 +266,7 @@ def apply_stack_move(
 
     # Update the stack in the player's stacks list
     updated_stack = stack.model_copy(update={"state": new_state, "progress": new_progress})
-    updated_stacks = [
-        updated_stack if s.stack_id == stack_id else s for s in player.stacks
-    ]
+    updated_stacks = [updated_stack if s.stack_id == stack_id else s for s in player.stacks]
     updated_player = player.model_copy(update={"stacks": updated_stacks})
     updated_players = [
         updated_player if p.player_id == player.player_id else p for p in state.players
@@ -430,9 +426,7 @@ def apply_split_move(
     # Handle collisions for moving stack on ROAD
     if moving_state == StackState.ROAD:
         # Get the fresh player from updated state
-        fresh_player = next(
-            p for p in updated_state.players if p.player_id == player.player_id
-        )
+        fresh_player = next(p for p in updated_state.players if p.player_id == player.player_id)
         logger.debug("Checking for collisions after split at progress=%d", new_progress)
         collision_result = handle_road_collision(
             updated_state, moving_stack, fresh_player, board_setup, events
@@ -488,10 +482,14 @@ def process_after_move(
 
     # Check for remaining rolls with legal moves (combined view)
     if remaining_rolls:
-        roll_move_groups = get_all_roll_move_groups(updated_player, remaining_rolls, state.board_setup)
+        roll_move_groups = get_all_roll_move_groups(
+            updated_player, remaining_rolls, state.board_setup
+        )
 
         if roll_move_groups:
-            legal_moves = get_all_legal_moves_flat(updated_player, remaining_rolls, state.board_setup)
+            legal_moves = get_all_legal_moves_flat(
+                updated_player, remaining_rolls, state.board_setup
+            )
             updated_turn = current_turn.model_copy(
                 update={
                     "rolls_to_allocate": remaining_rolls,
@@ -594,10 +592,14 @@ def resume_after_capture(
 
     # Check for remaining rolls with legal moves (combined view)
     if remaining_rolls:
-        roll_move_groups = get_all_roll_move_groups(updated_player, remaining_rolls, state.board_setup)
+        roll_move_groups = get_all_roll_move_groups(
+            updated_player, remaining_rolls, state.board_setup
+        )
 
         if roll_move_groups:
-            legal_moves = get_all_legal_moves_flat(updated_player, remaining_rolls, state.board_setup)
+            legal_moves = get_all_legal_moves_flat(
+                updated_player, remaining_rolls, state.board_setup
+            )
             updated_turn = current_turn.model_copy(
                 update={
                     "rolls_to_allocate": remaining_rolls,
@@ -693,7 +695,11 @@ def handle_road_collision(
             player = next(p for p in state.players if p.player_id == player.player_id)
             # Find the merged stack (moved_piece may have been replaced)
             merged = next(
-                (s for s in player.stacks if s.progress == moved_piece.progress and s.state == StackState.ROAD),
+                (
+                    s
+                    for s in player.stacks
+                    if s.progress == moved_piece.progress and s.state == StackState.ROAD
+                ),
                 moved_piece,
             )
             moved_piece = merged
@@ -709,8 +715,7 @@ def handle_road_collision(
 
     # 3. Filter to capturable opponents (moving height >= opponent height)
     capturable = [
-        (op, piece) for op, piece in opponent_collisions
-        if moved_piece.height >= piece.height
+        (op, piece) for op, piece in opponent_collisions if moved_piece.height >= piece.height
     ]
 
     if len(capturable) == 0:
@@ -729,17 +734,13 @@ def handle_road_collision(
         return ProcessResult.ok(state, events)
 
     # 4. Multiple capturable opponents — require player choice
-    targets = [
-        f"{op.player_id}:{piece.stack_id}" for op, piece in capturable
-    ]
+    targets = [f"{op.player_id}:{piece.stack_id}" for op, piece in capturable]
     pending = PendingCapture(
         moving_stack_id=moved_piece.stack_id,
         position=abs_pos,
         capturable_targets=targets,
     )
-    updated_turn = state.current_turn.model_copy(
-        update={"pending_capture": pending}
-    )
+    updated_turn = state.current_turn.model_copy(update={"pending_capture": pending})
     new_state = state.model_copy(
         update={
             "current_event": CurrentEvent.CAPTURE_CHOICE,

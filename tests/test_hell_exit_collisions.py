@@ -13,36 +13,29 @@ Scenarios tested:
 - StackExitedHell event correctness
 """
 
-from uuid import UUID
-
-import pytest
-
 from app.schemas.game_engine import (
     BoardSetup,
     CurrentEvent,
     GamePhase,
     GameState,
-    Player,
     Stack,
     StackState,
     Turn,
 )
-from app.services.game.engine.process import process_action
-from app.services.game.engine.actions import RollAction, MoveAction
+from app.services.game.engine.actions import MoveAction, RollAction
 from app.services.game.engine.events import (
+    DiceRolled,
+    RollGranted,
     StackExitedHell,
     StackUpdate,
-    StackMoved,
-    DiceRolled,
-    AwaitingChoice,
-    RollGranted,
 )
+from app.services.game.engine.process import process_action
 from tests.conftest import (
-    create_stack,
-    create_player,
-    create_stacks_in_hell,
     PLAYER_1_ID,
     PLAYER_2_ID,
+    create_player,
+    create_stack,
+    create_stacks_in_hell,
 )
 
 
@@ -77,9 +70,7 @@ def make_game_state(
 class TestExitToEmptyStart:
     """Test exiting HELL when the starting position is empty."""
 
-    def test_exit_hell_to_empty_starting_position(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_exit_hell_to_empty_starting_position(self, standard_board_setup: BoardSetup):
         """Player 1 has all stacks in HELL. Exit stack_1 with a 6.
 
         After the move, stack_1 should be on ROAD at progress=0 and
@@ -174,9 +165,7 @@ class TestExitWithOwnStackAtStart:
         added_ids = [s.stack_id for s in update_events[0].add_stacks]
         assert "stack_1_2" in added_ids
 
-    def test_exit_merges_with_multi_height_own_stack(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_exit_merges_with_multi_height_own_stack(self, standard_board_setup: BoardSetup):
         """Player 1 has stack_1_2 (height=2) at ROAD progress=0 and stack_3 in HELL.
 
         Exiting stack_3 should merge into stack_1_2_3 (height=3).
@@ -223,9 +212,7 @@ class TestExitWithOpponentAtStart:
     Both stacks should coexist at the same absolute position.
     """
 
-    def test_exit_no_capture_at_safe_starting_position(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_exit_no_capture_at_safe_starting_position(self, standard_board_setup: BoardSetup):
         """Player 1 exits HELL. Player 2 has a stack at absolute position 0.
 
         Player 2 has abs_starting_index=26, so progress=24 maps to
@@ -282,9 +269,7 @@ class TestExitWithOpponentAtStart:
 class TestMultipleExitsInTurn:
     """Test multiple stacks exiting HELL in the same turn via multiple 6s."""
 
-    def test_multiple_stacks_exit_in_same_turn(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_multiple_stacks_exit_in_same_turn(self, standard_board_setup: BoardSetup):
         """Simulate rolling [6, 6, 3] and exiting two stacks from HELL.
 
         Integration test through process_action:
@@ -380,9 +365,7 @@ class TestMultipleExitsInTurn:
 class TestExitEvents:
     """Test that StackExitedHell events contain correct data."""
 
-    def test_exit_emits_stack_exited_hell_event(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_exit_emits_stack_exited_hell_event(self, standard_board_setup: BoardSetup):
         """StackExitedHell event should have correct player_id, stack_id,
         and roll_used=6.
         """

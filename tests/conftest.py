@@ -59,9 +59,7 @@ def two_player_board_setup() -> BoardSetup:
     )
 
 
-def create_stack(
-    stack_id: str, state: StackState, height: int = 1, progress: int = 0
-) -> Stack:
+def create_stack(stack_id: str, state: StackState, height: int = 1, progress: int = 0) -> Stack:
     """Helper to create a stack."""
     return Stack(stack_id=stack_id, state=state, height=height, progress=progress)
 
@@ -127,7 +125,10 @@ def two_player_game_not_started(
 
 @pytest.fixture
 def four_player_game_not_started(
-    player1: Player, player2: Player, player3: Player, player4: Player,
+    player1: Player,
+    player2: Player,
+    player3: Player,
+    player4: Player,
     standard_board_setup: BoardSetup,
 ) -> GameState:
     return GameState(
@@ -164,8 +165,11 @@ def game_player1_turn(
 def game_with_stack_on_road(player2: Player, two_player_board_setup: BoardSetup) -> GameState:
     """Game where player 1 has a stack on the road at progress 10."""
     player1 = create_player(
-        player_id=PLAYER_1_ID, name="Player 1", color="red",
-        turn_order=1, abs_starting_index=0,
+        player_id=PLAYER_1_ID,
+        name="Player 1",
+        color="red",
+        turn_order=1,
+        abs_starting_index=0,
         stacks=[
             create_stack("stack_1", StackState.ROAD, 1, 10),
             create_stack("stack_2", StackState.HELL, 1, 0),
@@ -174,9 +178,12 @@ def game_with_stack_on_road(player2: Player, two_player_board_setup: BoardSetup)
         ],
     )
     turn = Turn(
-        player_id=PLAYER_1_ID, initial_roll=True,
-        rolls_to_allocate=[], legal_moves=[],
-        current_turn_order=1, extra_rolls=0,
+        player_id=PLAYER_1_ID,
+        initial_roll=True,
+        rolls_to_allocate=[],
+        legal_moves=[],
+        current_turn_order=1,
+        extra_rolls=0,
     )
     return GameState(
         phase=GamePhase.IN_PROGRESS,

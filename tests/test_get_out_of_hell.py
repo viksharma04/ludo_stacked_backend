@@ -163,7 +163,9 @@ class TestMultipleGetOuts:
         # (second 6 should allow getting another stack out)
         if state.current_event == CurrentEvent.PLAYER_CHOICE:
             if "stack_2" in state.current_turn.legal_moves:
-                result = process_action(state, MoveAction(stack_id="stack_2", roll_value=6), PLAYER_1_ID)
+                result = process_action(
+                    state, MoveAction(stack_id="stack_2", roll_value=6), PLAYER_1_ID
+                )
                 assert result.success
 
                 # stack_2 exited HELL and merged with stack_1 at progress=0 -> stack_1_2

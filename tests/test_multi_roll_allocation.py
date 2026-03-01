@@ -15,41 +15,31 @@ Schema changes from the old API:
 - RollMoveGroup(roll: int, move_groups: list[LegalMoveGroup]) — new model
 """
 
-from uuid import UUID
-
-import pytest
-
 from app.schemas.game_engine import (
     BoardSetup,
     CurrentEvent,
     GamePhase,
     GameState,
-    Player,
     RollMoveGroup,
-    Stack,
     StackState,
     Turn,
 )
-from app.services.game.engine.process import process_action
-from app.services.game.engine.actions import RollAction, MoveAction
+from app.services.game.engine.actions import MoveAction, RollAction
 from app.services.game.engine.events import (
-    DiceRolled,
     AwaitingChoice,
     RollGranted,
-    TurnEnded,
-    TurnStarted,
     StackExitedHell,
     StackMoved,
+    TurnEnded,
 )
-from app.services.game.engine.legal_moves import get_legal_moves
+from app.services.game.engine.process import process_action
 from tests.conftest import (
-    create_stack,
-    create_player,
-    create_stacks_in_hell,
     PLAYER_1_ID,
     PLAYER_2_ID,
+    create_player,
+    create_stack,
+    create_stacks_in_hell,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -66,12 +56,8 @@ def make_two_player_game(
     extra_rolls=0,
 ):
     """Build a two-player game state with Player 1's turn active."""
-    player1 = create_player(
-        PLAYER_1_ID, "Player 1", "red", 1, 0, stacks=player1_stacks
-    )
-    player2 = create_player(
-        PLAYER_2_ID, "Player 2", "blue", 2, 26, stacks=player2_stacks
-    )
+    player1 = create_player(PLAYER_1_ID, "Player 1", "red", 1, 0, stacks=player1_stacks)
+    player2 = create_player(PLAYER_2_ID, "Player 2", "blue", 2, 26, stacks=player2_stacks)
     turn = Turn(
         player_id=PLAYER_1_ID,
         initial_roll=False,
@@ -109,12 +95,7 @@ def get_moves_for_roll(awaiting: AwaitingChoice, roll: int) -> set[str]:
 
 def get_all_moves(awaiting: AwaitingChoice) -> set[str]:
     """Get all move IDs across all rolls."""
-    return {
-        m
-        for rmg in awaiting.available_moves
-        for g in rmg.move_groups
-        for m in g.moves
-    }
+    return {m for rmg in awaiting.available_moves for g in rmg.move_groups for m in g.moves}
 
 
 # ---------------------------------------------------------------------------
@@ -126,9 +107,7 @@ class TestCombinedRollView:
     """AwaitingChoice should present legal moves for ALL accumulated rolls,
     each in its own RollMoveGroup."""
 
-    def test_both_rolls_shown_when_both_have_legal_moves(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_both_rolls_shown_when_both_have_legal_moves(self, standard_board_setup: BoardSetup):
         """Player has stack_1 on ROAD at progress=10, stacks 2-4 in HELL.
         Accumulated rolls: [6, 3].
 
@@ -180,9 +159,7 @@ class TestCombinedRollView:
         assert "stack_1" in moves_for_3, "stack_1 can advance 3 on ROAD"
         assert "stack_2" not in moves_for_3, "HELL stacks cannot exit with 3"
 
-    def test_rolls_without_legal_moves_excluded(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_rolls_without_legal_moves_excluded(self, standard_board_setup: BoardSetup):
         """All stacks in HELL, rolls = [3, 6, 2].
         Only roll 6 has legal moves. Rolls 3 and 2 should NOT appear in
         available_moves — they are silently excluded.
@@ -208,18 +185,14 @@ class TestCombinedRollView:
         assert r2.success and r2.state is not None
 
         awaiting = find_awaiting(r2.events)
-        assert awaiting is not None, (
-            "Should emit AwaitingChoice because roll 6 has legal moves"
-        )
+        assert awaiting is not None, "Should emit AwaitingChoice because roll 6 has legal moves"
 
         offered_rolls = get_rolls_offered(awaiting)
         assert 6 in offered_rolls, "Roll 6 should appear (can exit HELL)"
         assert 3 not in offered_rolls, "Roll 3 should be excluded (no moves)"
         assert 2 not in offered_rolls, "Roll 2 should be excluded (no moves)"
 
-    def test_available_moves_contain_legal_move_groups(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_available_moves_contain_legal_move_groups(self, standard_board_setup: BoardSetup):
         """Verify the RollMoveGroup structure has proper LegalMoveGroups
         with parent stack grouping."""
         player1_stacks = [
@@ -263,9 +236,7 @@ class TestCombinedRollView:
 class TestMoveActionWithRollValue:
     """MoveAction now requires roll_value to specify which roll to consume."""
 
-    def test_move_consumes_specified_roll(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_move_consumes_specified_roll(self, standard_board_setup: BoardSetup):
         """Using roll_value=6 removes exactly one 6 from rolls_to_allocate."""
         player1_stacks = [
             create_stack("stack_1", StackState.ROAD, 1, 10),
@@ -285,9 +256,7 @@ class TestMoveActionWithRollValue:
         )
 
         # Move stack_1 using roll 6
-        result = process_action(
-            state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert result.success
         assert result.state is not None
 
@@ -295,9 +264,7 @@ class TestMoveActionWithRollValue:
         assert result.state.current_turn is not None
         assert result.state.current_turn.rolls_to_allocate == [4]
 
-    def test_player_can_choose_non_first_roll(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_player_can_choose_non_first_roll(self, standard_board_setup: BoardSetup):
         """Player chooses roll 4 instead of roll 6. Roll 4 consumed, 6 remains."""
         player1_stacks = [
             create_stack("stack_1", StackState.ROAD, 1, 10),
@@ -317,9 +284,7 @@ class TestMoveActionWithRollValue:
         )
 
         # Move stack_1 using roll 4 (not the first roll!)
-        result = process_action(
-            state, MoveAction(stack_id="stack_1", roll_value=4), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=4), PLAYER_1_ID)
         assert result.success
         assert result.state is not None
 
@@ -336,9 +301,7 @@ class TestMoveActionWithRollValue:
         assert awaiting is not None
         assert 6 in get_rolls_offered(awaiting)
 
-    def test_invalid_roll_value_not_in_pool(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_invalid_roll_value_not_in_pool(self, standard_board_setup: BoardSetup):
         """roll_value not in rolls_to_allocate returns error, state unchanged."""
         player1_stacks = [
             create_stack("stack_1", StackState.ROAD, 1, 10),
@@ -358,15 +321,11 @@ class TestMoveActionWithRollValue:
         )
 
         # Try to use roll 5, which is not in the pool
-        result = process_action(
-            state, MoveAction(stack_id="stack_1", roll_value=5), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=5), PLAYER_1_ID)
         assert not result.success
         assert result.state is None or result.state == state
 
-    def test_stack_not_legal_for_specified_roll(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_stack_not_legal_for_specified_roll(self, standard_board_setup: BoardSetup):
         """Stack that is not a legal move for the specified roll returns error."""
         player1_stacks = [
             create_stack("stack_1", StackState.ROAD, 1, 10),
@@ -386,9 +345,7 @@ class TestMoveActionWithRollValue:
         )
 
         # stack_2 is in HELL; roll 4 cannot exit HELL (only 6 can)
-        result = process_action(
-            state, MoveAction(stack_id="stack_2", roll_value=4), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_2", roll_value=4), PLAYER_1_ID)
         assert not result.success
 
 
@@ -400,9 +357,7 @@ class TestMoveActionWithRollValue:
 class TestDuplicateRolls:
     """Handling of duplicate roll values in the pool."""
 
-    def test_consume_one_of_duplicate_rolls(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_consume_one_of_duplicate_rolls(self, standard_board_setup: BoardSetup):
         """rolls=[6, 6, 3], MoveAction with roll_value=6 -> remaining [6, 3]."""
         player1_stacks = create_stacks_in_hell()
         player2_stacks = create_stacks_in_hell()
@@ -417,9 +372,7 @@ class TestDuplicateRolls:
         )
 
         # Exit stack_1 from HELL using one of the two 6s
-        result = process_action(
-            state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert result.success
         assert result.state is not None
 
@@ -515,9 +468,7 @@ class TestRecomputationAfterMove:
         assert 4 not in get_rolls_offered(awaiting1)
 
         # Exit stack_1 from HELL using roll 6
-        r3 = process_action(
-            r2.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
-        )
+        r3 = process_action(r2.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert r3.success and r3.state is not None
 
         exit_events = [e for e in r3.events if isinstance(e, StackExitedHell)]
@@ -525,15 +476,11 @@ class TestRecomputationAfterMove:
 
         # After recomputation, roll 4 NOW has legal moves (stack_1 on ROAD)
         awaiting2 = find_awaiting(r3.events)
-        assert awaiting2 is not None, (
-            "After HELL exit, remaining roll 4 should offer moves"
-        )
+        assert awaiting2 is not None, "After HELL exit, remaining roll 4 should offer moves"
         assert 4 in get_rolls_offered(awaiting2)
         assert "stack_1" in get_moves_for_roll(awaiting2, 4)
 
-    def test_merge_changes_legal_moves(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_merge_changes_legal_moves(self, standard_board_setup: BoardSetup):
         """After two stacks merge (stacking), legal moves reflect the
         new height. A roll that was divisible by height=1 may not be
         divisible by height=2.
@@ -560,9 +507,7 @@ class TestRecomputationAfterMove:
         )
 
         # Move stack_1 with roll 3 → merges with stack_2 at progress=3
-        result = process_action(
-            state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID)
         assert result.success and result.state is not None
 
         # After merge, recomputed moves for roll 4:
@@ -571,9 +516,7 @@ class TestRecomputationAfterMove:
         assert awaiting is not None
         assert 4 in get_rolls_offered(awaiting)
         moves_for_4 = get_moves_for_roll(awaiting, 4)
-        assert "stack_1_2" in moves_for_4, (
-            "Merged stack should be movable with remaining roll"
-        )
+        assert "stack_1_2" in moves_for_4, "Merged stack should be movable with remaining roll"
 
 
 # ---------------------------------------------------------------------------
@@ -585,9 +528,7 @@ class TestSkipRollNoLegalMoves:
     """Rolls with no legal moves are silently excluded from AwaitingChoice.
     Turn only ends when NO roll has legal moves."""
 
-    def test_usable_roll_offered_when_others_have_no_moves(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_usable_roll_offered_when_others_have_no_moves(self, standard_board_setup: BoardSetup):
         """All stacks in HELL, accumulated [3, 6, 2].
         Roll 3 and 2 have no legal moves. Roll 6 does.
         Turn should NOT end; AwaitingChoice should show only roll 6.
@@ -646,9 +587,7 @@ class TestSkipRollNoLegalMoves:
         assert turn_ended[0].reason == "no_legal_moves"
         assert result.state.current_turn.player_id == PLAYER_2_ID
 
-    def test_unusable_rolls_silently_discarded_after_move(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_unusable_rolls_silently_discarded_after_move(self, standard_board_setup: BoardSetup):
         """After a move, if remaining rolls have no legal moves, they are
         discarded and the turn ends (or extra rolls kick in).
 
@@ -681,9 +620,7 @@ class TestSkipRollNoLegalMoves:
         )
 
         # Move stack_1 with roll 2 → progress 53+2=55 → HEAVEN
-        result = process_action(
-            state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=2), PLAYER_1_ID)
         assert result.success and result.state is not None
 
         # Remaining roll [1]: no moves (stack_1 in HEAVEN, rest in HELL)
@@ -701,9 +638,7 @@ class TestSkipRollNoLegalMoves:
 class TestBonusRollOrdering:
     """Capture bonus rolls are deferred until all accumulated rolls consumed."""
 
-    def test_remaining_rolls_before_bonus_roll(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_remaining_rolls_before_bonus_roll(self, standard_board_setup: BoardSetup):
         """Player has rolls=[6, 4]. Uses roll 6, captures opponent.
         extra_rolls += 1. But remaining roll [4] should be offered FIRST
         before entering PLAYER_ROLL for the bonus.
@@ -746,9 +681,7 @@ class TestBonusRollOrdering:
         )
 
         # Move stack_1 with roll 6: progress 2→8, captures P2's stack at abs 8
-        result = process_action(
-            state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert result.success and result.state is not None
 
         # Capture grants extra_rolls, but remaining roll [4] should be offered first
@@ -763,9 +696,7 @@ class TestBonusRollOrdering:
         assert awaiting is not None
         assert 4 in get_rolls_offered(awaiting)
 
-    def test_bonus_roll_after_all_rolls_consumed(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_bonus_roll_after_all_rolls_consumed(self, standard_board_setup: BoardSetup):
         """Player captures with their LAST roll. No remaining rolls.
         Should enter PLAYER_ROLL for the capture bonus.
         """
@@ -792,9 +723,7 @@ class TestBonusRollOrdering:
         )
 
         # Move stack_1 with roll 6: captures, no remaining rolls
-        result = process_action(
-            state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert result.success and result.state is not None
 
         # No remaining rolls → enters PLAYER_ROLL for bonus
@@ -811,9 +740,7 @@ class TestBonusRollOrdering:
 class TestMultipleMovesInTurn:
     """Multi-step turn flows with explicit roll selection."""
 
-    def test_exit_hell_then_move_same_stack(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_exit_hell_then_move_same_stack(self, standard_board_setup: BoardSetup):
         """Full integration through process_action.
 
         Player 1 has all stacks in HELL.
@@ -858,9 +785,7 @@ class TestMultipleMovesInTurn:
         assert "stack_1" in get_moves_for_roll(awaiting1, 6)
 
         # Step 3: Exit stack_1 from HELL with roll 6
-        r3 = process_action(
-            r2.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
-        )
+        r3 = process_action(r2.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert r3.success and r3.state is not None
 
         exit_events = [e for e in r3.events if isinstance(e, StackExitedHell)]
@@ -877,9 +802,7 @@ class TestMultipleMovesInTurn:
         assert "stack_1" in get_moves_for_roll(awaiting2, 4)
 
         # Step 4: Move stack_1 with roll 4 → progress=4
-        r4 = process_action(
-            r3.state, MoveAction(stack_id="stack_1", roll_value=4), PLAYER_1_ID
-        )
+        r4 = process_action(r3.state, MoveAction(stack_id="stack_1", roll_value=4), PLAYER_1_ID)
         assert r4.success and r4.state is not None
 
         moved = [e for e in r4.events if isinstance(e, StackMoved)]
@@ -897,9 +820,7 @@ class TestMultipleMovesInTurn:
         assert s1.state == StackState.ROAD
         assert s1.progress == 4
 
-    def test_two_stacks_exit_hell_with_double_six(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_two_stacks_exit_hell_with_double_six(self, standard_board_setup: BoardSetup):
         """Player 1 has all stacks in HELL.
 
         1. Roll 6 → extra roll
@@ -946,9 +867,7 @@ class TestMultipleMovesInTurn:
         assert 6 in get_rolls_offered(awaiting1)
 
         # Exit stack_1 with roll 6
-        r4 = process_action(
-            r3.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
-        )
+        r4 = process_action(r3.state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert r4.success and r4.state is not None
         exit1 = [e for e in r4.events if isinstance(e, StackExitedHell)]
         assert len(exit1) == 1 and exit1[0].stack_id == "stack_1"
@@ -960,9 +879,7 @@ class TestMultipleMovesInTurn:
         assert "stack_2" in get_moves_for_roll(awaiting2, 6)
 
         # Exit stack_2 with roll 6 → merges with stack_1 at progress=0
-        r5 = process_action(
-            r4.state, MoveAction(stack_id="stack_2", roll_value=6), PLAYER_1_ID
-        )
+        r5 = process_action(r4.state, MoveAction(stack_id="stack_2", roll_value=6), PLAYER_1_ID)
         assert r5.success and r5.state is not None
         exit2 = [e for e in r5.events if isinstance(e, StackExitedHell)]
         assert len(exit2) == 1 and exit2[0].stack_id == "stack_2"
@@ -976,9 +893,7 @@ class TestMultipleMovesInTurn:
         assert "stack_2" in get_moves_for_roll(awaiting3, 3)
 
         # Move stack_2 (split from merged stack) with roll 3 → progress=3
-        r6 = process_action(
-            r5.state, MoveAction(stack_id="stack_2", roll_value=3), PLAYER_1_ID
-        )
+        r6 = process_action(r5.state, MoveAction(stack_id="stack_2", roll_value=3), PLAYER_1_ID)
         assert r6.success and r6.state is not None
 
         moved = [e for e in r6.events if isinstance(e, StackMoved)]
@@ -1003,9 +918,7 @@ class TestRollAllocationAfterMove:
     """After a move is made, remaining accumulated rolls should still be
     available for further moves."""
 
-    def test_remaining_rolls_available_after_move(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_remaining_rolls_available_after_move(self, standard_board_setup: BoardSetup):
         """Player has stack_1 on ROAD at progress=10. Rolls=[6, 4].
 
         Player moves stack_1 with roll_value=6 → progress=16.
@@ -1029,9 +942,7 @@ class TestRollAllocationAfterMove:
         )
 
         # Move stack_1 with roll_value=6 → progress 10+6=16
-        result = process_action(
-            state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=6), PLAYER_1_ID)
         assert result.success and result.state is not None
 
         moved = [e for e in result.events if isinstance(e, StackMoved)]

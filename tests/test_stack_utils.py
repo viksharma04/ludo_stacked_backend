@@ -200,9 +200,7 @@ class TestResolveStackingIntegration:
         result = resolve_stacking(state, player, stack_3, stack_1)
 
         assert result.state is not None
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_ID)
         # Should have exactly one merged stack
         assert len(updated_player.stacks) == 1
         merged = updated_player.stacks[0]
@@ -215,20 +213,14 @@ class TestSendToHellIntegration:
 
     def test_decompose_composite_stack(self):
         """Capturing stack_1_2_3 should decompose into stack_1, stack_2, stack_3 in HELL."""
-        composite = Stack(
-            stack_id="stack_1_2_3", state=StackState.ROAD, height=3, progress=10
-        )
-        existing_hell = Stack(
-            stack_id="stack_4", state=StackState.HELL, height=1, progress=0
-        )
+        composite = Stack(stack_id="stack_1_2_3", state=StackState.ROAD, height=3, progress=10)
+        existing_hell = Stack(stack_id="stack_4", state=StackState.HELL, height=1, progress=0)
         player = _make_player([composite, existing_hell])
         state = _make_game_state([player])
 
         updated_state = send_to_hell(state, player, composite)
 
-        updated_player = next(
-            p for p in updated_state.players if p.player_id == PLAYER_ID
-        )
+        updated_player = next(p for p in updated_state.players if p.player_id == PLAYER_ID)
         stacks_by_id = {s.stack_id: s for s in updated_player.stacks}
 
         # Should have 4 stacks: stack_1, stack_2, stack_3 (decomposed) + stack_4 (unchanged)
@@ -250,7 +242,10 @@ class TestSendToHellIntegration:
 class TestLegalMoveGroup:
     def test_legal_move_group_creation(self):
         from app.schemas.game_engine import LegalMoveGroup
-        group = LegalMoveGroup(stack_id="stack_1_2_3", moves=["stack_1_2_3", "stack_2_3", "stack_3"])
+
+        group = LegalMoveGroup(
+            stack_id="stack_1_2_3", moves=["stack_1_2_3", "stack_2_3", "stack_3"]
+        )
         assert group.stack_id == "stack_1_2_3"
         assert len(group.moves) == 3
 
@@ -258,6 +253,7 @@ class TestLegalMoveGroup:
 class TestMoveActionField:
     def test_move_action_has_stack_id(self):
         from app.services.game.engine.actions import MoveAction
+
         action = MoveAction(stack_id="stack_1_2", roll_value=3)
         assert action.stack_id == "stack_1_2"
         assert action.action_type == "move"
@@ -280,28 +276,46 @@ if "app.services.game.engine.legal_moves" not in sys.modules:
 class TestLegalMovesSubStackIds:
     def test_partial_moves_use_sub_stack_ids(self):
         from app.services.game.engine.legal_moves import get_legal_moves
+
         player = Player(
-            player_id=PLAYER_ID, name="P1", color="red",
-            turn_order=1, abs_starting_index=0,
+            player_id=PLAYER_ID,
+            name="P1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
             stacks=[Stack(stack_id="stack_1_2_3", state=StackState.ROAD, height=3, progress=10)],
         )
-        board = BoardSetup(squares_to_win=57, squares_to_homestretch=52,
-                          starting_positions=[0], safe_spaces=[], get_out_rolls=[6])
+        board = BoardSetup(
+            squares_to_win=57,
+            squares_to_homestretch=52,
+            starting_positions=[0],
+            safe_spaces=[],
+            get_out_rolls=[6],
+        )
         moves = get_legal_moves(player, 6, board)
         assert "stack_1_2_3" in moves  # full: 6%3==0, eff=2
-        assert "stack_2_3" in moves    # partial 2: 6%2==0, eff=3
-        assert "stack_3" in moves      # partial 1: 6%1==0, eff=6
+        assert "stack_2_3" in moves  # partial 2: 6%2==0, eff=3
+        assert "stack_3" in moves  # partial 1: 6%1==0, eff=6
         assert not any(":" in m for m in moves)
 
     def test_hell_stacks_on_get_out_roll(self):
         from app.services.game.engine.legal_moves import get_legal_moves
+
         player = Player(
-            player_id=PLAYER_ID, name="P1", color="red",
-            turn_order=1, abs_starting_index=0,
+            player_id=PLAYER_ID,
+            name="P1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
             stacks=[Stack(stack_id="stack_4", state=StackState.HELL, height=1, progress=0)],
         )
-        board = BoardSetup(squares_to_win=57, squares_to_homestretch=52,
-                          starting_positions=[0], safe_spaces=[], get_out_rolls=[6])
+        board = BoardSetup(
+            squares_to_win=57,
+            squares_to_homestretch=52,
+            starting_positions=[0],
+            safe_spaces=[],
+            get_out_rolls=[6],
+        )
         moves = get_legal_moves(player, 6, board)
         assert "stack_4" in moves
 
@@ -309,16 +323,25 @@ class TestLegalMovesSubStackIds:
 class TestGetLegalMoveGroups:
     def test_groups_by_parent(self):
         from app.services.game.engine.legal_moves import get_legal_move_groups
+
         player = Player(
-            player_id=PLAYER_ID, name="P1", color="red",
-            turn_order=1, abs_starting_index=0,
+            player_id=PLAYER_ID,
+            name="P1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
             stacks=[
                 Stack(stack_id="stack_1_2_3", state=StackState.ROAD, height=3, progress=10),
                 Stack(stack_id="stack_4", state=StackState.HELL, height=1, progress=0),
             ],
         )
-        board = BoardSetup(squares_to_win=57, squares_to_homestretch=52,
-                          starting_positions=[0], safe_spaces=[], get_out_rolls=[6])
+        board = BoardSetup(
+            squares_to_win=57,
+            squares_to_homestretch=52,
+            starting_positions=[0],
+            safe_spaces=[],
+            get_out_rolls=[6],
+        )
         groups = get_legal_move_groups(player, 6, board)
         assert len(groups) == 2
         stack_group = next(g for g in groups if g.stack_id == "stack_1_2_3")
@@ -441,15 +464,14 @@ class TestApplyStackMove:
 
         assert result.success
         assert result.state is not None
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_ID)
         moved = next(s for s in updated_player.stacks if s.stack_id == "stack_1")
         assert moved.progress == 14
         assert moved.state == StackState.ROAD
 
         # Should have a StackMoved event
         from app.services.game.engine.events import StackMoved
+
         stack_moved = [e for e in result.events if isinstance(e, StackMoved)]
         assert len(stack_moved) == 1
         assert stack_moved[0].from_progress == 10
@@ -466,15 +488,14 @@ class TestApplyStackMove:
 
         assert result.success
         assert result.state is not None
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_ID)
         moved = next(s for s in updated_player.stacks if s.stack_id == "stack_1")
         assert moved.progress == 0
         assert moved.state == StackState.ROAD
 
         # Should have a StackExitedHell event
         from app.services.game.engine.events import StackExitedHell
+
         exited = [e for e in result.events if isinstance(e, StackExitedHell)]
         assert len(exited) == 1
         assert exited[0].stack_id == "stack_1"
@@ -490,9 +511,7 @@ class TestApplyStackMove:
 
         assert result.success
         assert result.state is not None
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_ID)
         moved = next(s for s in updated_player.stacks if s.stack_id == "stack_1_2")
         assert moved.progress == 12  # 10 + 4/2
         assert moved.state == StackState.ROAD
@@ -507,15 +526,14 @@ class TestApplyStackMove:
 
         assert result.success
         assert result.state is not None
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_ID)
         moved = next(s for s in updated_player.stacks if s.stack_id == "stack_1")
         assert moved.progress == 57
         assert moved.state == StackState.HEAVEN
 
         # Should have StackReachedHeaven event
         from app.services.game.engine.events import StackReachedHeaven
+
         heaven_events = [e for e in result.events if isinstance(e, StackReachedHeaven)]
         assert len(heaven_events) == 1
         assert heaven_events[0].stack_id == "stack_1"
@@ -550,9 +568,7 @@ class TestApplySplitMove:
 
         assert result.success
         assert result.state is not None
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_ID)
         stacks_by_id = {s.stack_id: s for s in updated_player.stacks}
 
         # Parent should be removed
@@ -573,7 +589,8 @@ class TestApplySplitMove:
         assert moving.state == StackState.ROAD
 
         # Should have StackUpdate and StackMoved events
-        from app.services.game.engine.events import StackUpdate, StackMoved
+        from app.services.game.engine.events import StackMoved, StackUpdate
+
         updates = [e for e in result.events if isinstance(e, StackUpdate)]
         assert len(updates) == 1
         assert len(updates[0].remove_stacks) == 1
@@ -601,9 +618,7 @@ class TestApplySplitMove:
 
         assert result.success
         assert result.state is not None
-        updated_player = next(
-            p for p in result.state.players if p.player_id == PLAYER_ID
-        )
+        updated_player = next(p for p in result.state.players if p.player_id == PLAYER_ID)
         stacks_by_id = {s.stack_id: s for s in updated_player.stacks}
 
         assert "stack_1" in stacks_by_id
@@ -632,11 +647,14 @@ class TestInitializeGame:
     def test_players_have_four_stacks_in_hell(self):
         from app.schemas.game_engine import GameSettings, PlayerAttributes, StackState
         from app.services.game.start_game import initialize_game
+
         settings = GameSettings(
             num_players=2,
             player_attributes=[
                 PlayerAttributes(player_id=PLAYER_ID, name="P1", color="red"),
-                PlayerAttributes(player_id=UUID("00000000-0000-0000-0000-000000000002"), name="P2", color="blue"),
+                PlayerAttributes(
+                    player_id=UUID("00000000-0000-0000-0000-000000000002"), name="P2", color="blue"
+                ),
             ],
             grid_length=7,
         )
@@ -656,9 +674,13 @@ class TestCheckWinCondition:
 
     def test_no_winner_when_stacks_not_in_heaven(self):
         from app.services.game.engine.process import check_win_condition
+
         player = Player(
-            player_id=PLAYER_ID, name="P1", color="red",
-            turn_order=1, abs_starting_index=0,
+            player_id=PLAYER_ID,
+            name="P1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
             stacks=[
                 Stack(stack_id="stack_1", state=StackState.HEAVEN, height=1, progress=57),
                 Stack(stack_id="stack_2", state=StackState.ROAD, height=1, progress=10),
@@ -671,17 +693,24 @@ class TestCheckWinCondition:
             players=[player],
             current_event=CurrentEvent.PLAYER_ROLL,
             board_setup=BoardSetup(
-                squares_to_win=57, squares_to_homestretch=52,
-                starting_positions=[0], safe_spaces=[], get_out_rolls=[6],
+                squares_to_win=57,
+                squares_to_homestretch=52,
+                starting_positions=[0],
+                safe_spaces=[],
+                get_out_rolls=[6],
             ),
         )
         assert check_win_condition(state) is None
 
     def test_winner_when_all_stacks_in_heaven(self):
         from app.services.game.engine.process import check_win_condition
+
         player = Player(
-            player_id=PLAYER_ID, name="P1", color="red",
-            turn_order=1, abs_starting_index=0,
+            player_id=PLAYER_ID,
+            name="P1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
             stacks=[
                 Stack(stack_id="stack_1", state=StackState.HEAVEN, height=1, progress=57),
                 Stack(stack_id="stack_2", state=StackState.HEAVEN, height=1, progress=57),
@@ -694,8 +723,11 @@ class TestCheckWinCondition:
             players=[player],
             current_event=CurrentEvent.PLAYER_ROLL,
             board_setup=BoardSetup(
-                squares_to_win=57, squares_to_homestretch=52,
-                starting_positions=[0], safe_spaces=[], get_out_rolls=[6],
+                squares_to_win=57,
+                squares_to_homestretch=52,
+                starting_positions=[0],
+                safe_spaces=[],
+                get_out_rolls=[6],
             ),
         )
         assert check_win_condition(state) == PLAYER_ID
@@ -703,9 +735,13 @@ class TestCheckWinCondition:
     def test_winner_with_merged_stacks_in_heaven(self):
         """Win with fewer stacks (some merged) all in heaven."""
         from app.services.game.engine.process import check_win_condition
+
         player = Player(
-            player_id=PLAYER_ID, name="P1", color="red",
-            turn_order=1, abs_starting_index=0,
+            player_id=PLAYER_ID,
+            name="P1",
+            color="red",
+            turn_order=1,
+            abs_starting_index=0,
             stacks=[
                 Stack(stack_id="stack_1_2_3_4", state=StackState.HEAVEN, height=4, progress=57),
             ],
@@ -715,8 +751,11 @@ class TestCheckWinCondition:
             players=[player],
             current_event=CurrentEvent.PLAYER_ROLL,
             board_setup=BoardSetup(
-                squares_to_win=57, squares_to_homestretch=52,
-                starting_positions=[0], safe_spaces=[], get_out_rolls=[6],
+                squares_to_win=57,
+                squares_to_homestretch=52,
+                starting_positions=[0],
+                safe_spaces=[],
+                get_out_rolls=[6],
             ),
         )
         assert check_win_condition(state) == PLAYER_ID

@@ -9,48 +9,41 @@ AwaitingChoice uses available_moves (list of RollMoveGroup) instead of
 roll_to_allocate + legal_moves.
 """
 
-from uuid import UUID
-
-import pytest
-
 from app.schemas.game_engine import (
     BoardSetup,
     CurrentEvent,
     GamePhase,
     GameState,
-    Player,
-    Stack,
     StackState,
     Turn,
 )
-from app.services.game.engine.process import process_action
-from app.services.game.engine.actions import StartGameAction, RollAction, MoveAction
+from app.services.game.engine.actions import MoveAction, RollAction, StartGameAction
 from app.services.game.engine.events import (
-    GameStarted,
-    TurnStarted,
-    TurnEnded,
-    RollGranted,
-    DiceRolled,
     AwaitingChoice,
+    DiceRolled,
+    GameStarted,
+    RollGranted,
+    StackCaptured,
     StackExitedHell,
     StackMoved,
     ThreeSixesPenalty,
-    StackCaptured,
+    TurnEnded,
+    TurnStarted,
 )
+from app.services.game.engine.process import process_action
 from tests.conftest import (
-    create_stack,
-    create_player,
-    create_stacks_in_hell,
     PLAYER_1_ID,
     PLAYER_2_ID,
     PLAYER_3_ID,
     PLAYER_4_ID,
+    create_player,
+    create_stack,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def find_events(events, event_type):
     """Find all events of a specific type."""
@@ -79,6 +72,7 @@ def get_moves_for_roll(awaiting: AwaitingChoice, roll: int) -> set[str]:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestBasicTurnFlow:
     """Basic turn lifecycle: roll with no legal moves ends turn."""
@@ -450,9 +444,7 @@ class TestCaptureInTurnFlow:
 class TestGameStartSequence:
     """Starting a game emits the correct event sequence."""
 
-    def test_start_game_emits_correct_event_sequence(
-        self, two_player_game_not_started: GameState
-    ):
+    def test_start_game_emits_correct_event_sequence(self, two_player_game_not_started: GameState):
         """StartGameAction produces GameStarted, TurnStarted, RollGranted."""
         result = process_action(
             two_player_game_not_started,
@@ -526,9 +518,7 @@ class TestTurnWrapping:
 class TestMultiActionSequence:
     """Verify current_event transitions at each step of a multi-action turn."""
 
-    def test_multi_action_sequence_through_process_action(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_multi_action_sequence_through_process_action(self, standard_board_setup: BoardSetup):
         """
         Full sequence verifying event transitions:
         1. Roll 6 (extra roll) -> PLAYER_ROLL

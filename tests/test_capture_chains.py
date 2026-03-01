@@ -9,38 +9,30 @@ Key rules tested:
 - Extra roll with no legal moves -> turn ends
 """
 
-from uuid import UUID
-
-import pytest
-
 from app.schemas.game_engine import (
     BoardSetup,
     CurrentEvent,
     GamePhase,
     GameState,
-    Player,
-    Stack,
     StackState,
     Turn,
 )
-from app.services.game.engine.process import process_action
-from app.services.game.engine.actions import RollAction, MoveAction
+from app.services.game.engine.actions import MoveAction, RollAction
+from app.services.game.engine.captures import grant_extra_rolls
 from app.services.game.engine.events import (
-    StackCaptured,
-    StackMoved,
+    DiceRolled,
     RollGranted,
-    AwaitingChoice,
+    StackCaptured,
     TurnEnded,
     TurnStarted,
-    DiceRolled,
 )
-from app.services.game.engine.captures import grant_extra_rolls
+from app.services.game.engine.process import process_action
 from tests.conftest import (
-    create_stack,
-    create_player,
-    create_stacks_in_hell,
     PLAYER_1_ID,
     PLAYER_2_ID,
+    create_player,
+    create_stack,
+    create_stacks_in_hell,
 )
 
 
@@ -121,8 +113,7 @@ class TestCaptureGrantsExtraRolls:
         # After capturing height-1 stack and consuming the only allocated roll,
         # extra roll kicks in: RollGranted with reason="capture_bonus" should be emitted
         roll_granted_events = [
-            e for e in result.events
-            if isinstance(e, RollGranted) and e.reason == "capture_bonus"
+            e for e in result.events if isinstance(e, RollGranted) and e.reason == "capture_bonus"
         ]
         assert len(roll_granted_events) == 1
         assert roll_granted_events[0].player_id == PLAYER_1_ID
@@ -184,8 +175,7 @@ class TestCaptureGrantsExtraRolls:
 
         # A capture_bonus RollGranted should have been emitted
         roll_granted_events = [
-            e for e in result.events
-            if isinstance(e, RollGranted) and e.reason == "capture_bonus"
+            e for e in result.events if isinstance(e, RollGranted) and e.reason == "capture_bonus"
         ]
         assert len(roll_granted_events) == 1
 
@@ -227,8 +217,7 @@ class TestExtraRollAfterAllocatedRolls:
 
         # After the allocated roll [2] is consumed, extra_rolls=1 kicks in
         roll_granted_events = [
-            e for e in result.events
-            if isinstance(e, RollGranted) and e.reason == "capture_bonus"
+            e for e in result.events if isinstance(e, RollGranted) and e.reason == "capture_bonus"
         ]
         assert len(roll_granted_events) == 1
         assert roll_granted_events[0].player_id == PLAYER_1_ID
@@ -244,9 +233,7 @@ class TestExtraRollAfterAllocatedRolls:
 class TestCaptureChainAccumulation:
     """Test that extra rolls from multiple captures accumulate (snowball)."""
 
-    def test_extra_rolls_accumulate_from_multiple_captures(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_extra_rolls_accumulate_from_multiple_captures(self, standard_board_setup: BoardSetup):
         """grant_extra_rolls should add to existing extra_rolls, not replace.
 
         Start with extra_rolls=1. Call grant_extra_rolls(state, 2).
@@ -342,9 +329,7 @@ class TestExtraRollBehavior:
         assert "RollGranted" in event_types
 
         # The RollGranted should have reason="capture_bonus"
-        roll_granted = next(
-            e for e in result.events if isinstance(e, RollGranted)
-        )
+        roll_granted = next(e for e in result.events if isinstance(e, RollGranted))
         assert roll_granted.reason == "capture_bonus"
         assert roll_granted.player_id == PLAYER_1_ID
 
@@ -385,8 +370,7 @@ class TestExtraRollBehavior:
         assert dice_rolled[0].grants_extra_roll is True
 
         roll_granted = [
-            e for e in result.events
-            if isinstance(e, RollGranted) and e.reason == "rolled_six"
+            e for e in result.events if isinstance(e, RollGranted) and e.reason == "rolled_six"
         ]
         assert len(roll_granted) == 1
 
@@ -432,8 +416,7 @@ class TestExtraRollBehavior:
 
         # RollGranted for next player's turn start
         roll_granted = [
-            e for e in result.events
-            if isinstance(e, RollGranted) and e.reason == "turn_start"
+            e for e in result.events if isinstance(e, RollGranted) and e.reason == "turn_start"
         ]
         assert len(roll_granted) == 1
         assert roll_granted[0].player_id == PLAYER_2_ID
@@ -503,7 +486,6 @@ class TestExtraRollBehavior:
 
         # A capture_bonus RollGranted should have been emitted
         roll_granted_events = [
-            e for e in result.events
-            if isinstance(e, RollGranted) and e.reason == "capture_bonus"
+            e for e in result.events if isinstance(e, RollGranted) and e.reason == "capture_bonus"
         ]
         assert len(roll_granted_events) == 1

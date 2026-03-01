@@ -101,12 +101,8 @@ def process_roll(state: GameState, roll_value: int, player_id: UUID) -> ProcessR
         )
         events.append(ThreeSixesPenalty(player_id=player_id, rolls=new_rolls[-3:]))
 
-        next_turn_order = get_next_turn_order(
-            current_turn.current_turn_order, len(state.players)
-        )
-        next_player = next(
-            p for p in state.players if p.turn_order == next_turn_order
-        )
+        next_turn_order = get_next_turn_order(current_turn.current_turn_order, len(state.players))
+        next_player = next(p for p in state.players if p.turn_order == next_turn_order)
 
         events.append(
             TurnEnded(
@@ -115,12 +111,8 @@ def process_roll(state: GameState, roll_value: int, player_id: UUID) -> ProcessR
                 next_player_id=next_player.player_id,
             )
         )
-        events.append(
-            TurnStarted(player_id=next_player.player_id, turn_number=next_turn_order)
-        )
-        events.append(
-            RollGranted(player_id=next_player.player_id, reason="turn_start")
-        )
+        events.append(TurnStarted(player_id=next_player.player_id, turn_number=next_turn_order))
+        events.append(RollGranted(player_id=next_player.player_id, reason="turn_start"))
 
         new_turn = create_new_turn(turn_order=next_turn_order, players=state.players)
         new_state = state.model_copy(
@@ -169,9 +161,7 @@ def process_roll(state: GameState, roll_value: int, player_id: UUID) -> ProcessR
         return ProcessResult.ok(new_state, events)
 
     # Check for legal moves across all accumulated rolls (combined view)
-    current_player = next(
-        p for p in state.players if p.player_id == current_turn.player_id
-    )
+    current_player = next(p for p in state.players if p.player_id == current_turn.player_id)
 
     from .legal_moves import get_all_legal_moves_flat, get_all_roll_move_groups
 
@@ -208,9 +198,7 @@ def process_roll(state: GameState, roll_value: int, player_id: UUID) -> ProcessR
         str(player_id)[:8],
         new_rolls[0],
     )
-    next_turn_order = get_next_turn_order(
-        current_turn.current_turn_order, len(state.players)
-    )
+    next_turn_order = get_next_turn_order(current_turn.current_turn_order, len(state.players))
     next_player = next(p for p in state.players if p.turn_order == next_turn_order)
 
     events.append(
@@ -220,12 +208,8 @@ def process_roll(state: GameState, roll_value: int, player_id: UUID) -> ProcessR
             next_player_id=next_player.player_id,
         )
     )
-    events.append(
-        TurnStarted(player_id=next_player.player_id, turn_number=next_turn_order)
-    )
-    events.append(
-        RollGranted(player_id=next_player.player_id, reason="turn_start")
-    )
+    events.append(TurnStarted(player_id=next_player.player_id, turn_number=next_turn_order))
+    events.append(RollGranted(player_id=next_player.player_id, reason="turn_start"))
 
     new_turn = create_new_turn(turn_order=next_turn_order, players=state.players)
     new_state = state.model_copy(

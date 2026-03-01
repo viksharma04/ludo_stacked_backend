@@ -81,10 +81,7 @@ def get_legal_move_groups(
             groups[parent] = []
         groups[parent].append(move_id)
 
-    return [
-        LegalMoveGroup(stack_id=stack_id, moves=moves)
-        for stack_id, moves in groups.items()
-    ]
+    return [LegalMoveGroup(stack_id=stack_id, moves=moves) for stack_id, moves in groups.items()]
 
 
 def get_all_roll_move_groups(

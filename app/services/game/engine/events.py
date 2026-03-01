@@ -12,7 +12,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.schemas.game_engine import LegalMoveGroup, RollMoveGroup, Stack, StackState
+from app.schemas.game_engine import RollMoveGroup, Stack, StackState
 
 
 class GameEvent(BaseModel):
@@ -85,9 +85,7 @@ class StackCaptured(GameEvent):
 
     event_type: Literal["stack_captured"] = "stack_captured"
     capturing_player_id: UUID
-    capturing_stack_id: str = Field(
-        ..., description="ID of the capturing stack"
-    )
+    capturing_stack_id: str = Field(..., description="ID of the capturing stack")
     captured_player_id: UUID
     captured_stack_id: str
     position: int = Field(..., description="Board position where capture occurred")

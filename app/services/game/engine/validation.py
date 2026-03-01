@@ -218,9 +218,7 @@ def validate_action(
             current_player = next(
                 p for p in state.players if p.player_id == state.current_turn.player_id
             )
-            roll_legal_moves = get_legal_moves(
-                current_player, action.roll_value, state.board_setup
-            )
+            roll_legal_moves = get_legal_moves(current_player, action.roll_value, state.board_setup)
             if action.stack_id not in roll_legal_moves:
                 logger.warning(
                     "Validation failed: ILLEGAL_MOVE_FOR_ROLL, stack=%s, roll=%d, legal=%s",

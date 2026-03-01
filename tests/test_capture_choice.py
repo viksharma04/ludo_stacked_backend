@@ -19,44 +19,37 @@ is currently a placeholder in captures.py. These tests represent the
 intended behavior once the mechanic is implemented.
 """
 
-from uuid import UUID
-
-import pytest
-
 from app.schemas.game_engine import (
     BoardSetup,
     CurrentEvent,
     GamePhase,
     GameState,
     PendingCapture,
-    Player,
-    Stack,
     StackState,
     Turn,
 )
-from app.services.game.engine.process import process_action
-from app.services.game.engine.actions import MoveAction, CaptureChoiceAction
+from app.services.game.engine.actions import CaptureChoiceAction, MoveAction
+from app.services.game.engine.captures import detect_collisions
 from app.services.game.engine.events import (
-    StackCaptured,
-    StackMoved,
     AwaitingCaptureChoice,
     RollGranted,
+    StackCaptured,
 )
-from app.services.game.engine.captures import detect_collisions, resolve_collision
+from app.services.game.engine.process import process_action
 from tests.conftest import (
-    create_stack,
-    create_player,
-    create_stacks_in_hell,
     PLAYER_1_ID,
     PLAYER_2_ID,
     PLAYER_3_ID,
     PLAYER_4_ID,
+    create_player,
+    create_stack,
+    create_stacks_in_hell,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def make_four_player_game(
     p1_stacks,
@@ -96,6 +89,7 @@ def make_four_player_game(
 # ---------------------------------------------------------------------------
 # 1. Single opponent -> auto-resolved (existing behaviour)
 # ---------------------------------------------------------------------------
+
 
 class TestSingleOpponentAutoResolved:
     """When only one opponent occupies the target square, capture is automatic."""
@@ -158,6 +152,7 @@ class TestSingleOpponentAutoResolved:
 # ---------------------------------------------------------------------------
 # 2. Multiple opponents require choice
 # ---------------------------------------------------------------------------
+
 
 class TestMultipleOpponentsRequireChoice:
     """When multiple opponents occupy the target square, player must choose."""
@@ -233,6 +228,7 @@ class TestMultipleOpponentsRequireChoice:
 # ---------------------------------------------------------------------------
 # 3. Capture choice resolution
 # ---------------------------------------------------------------------------
+
 
 class TestCaptureChoiceResolution:
     """Processing CaptureChoiceAction resolves the pending capture."""
@@ -332,6 +328,7 @@ class TestCaptureChoiceResolution:
 # 4. Capture choice validation
 # ---------------------------------------------------------------------------
 
+
 class TestCaptureChoiceValidation:
     """Invalid capture choices are rejected."""
 
@@ -410,12 +407,11 @@ class TestCaptureChoiceValidation:
 # 5. Height filter on capture options
 # ---------------------------------------------------------------------------
 
+
 class TestCaptureChoiceHeightFilter:
     """Options exclude stacks that are too tall to capture."""
 
-    def test_options_exclude_stacks_too_tall_to_capture(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_options_exclude_stacks_too_tall_to_capture(self, standard_board_setup: BoardSetup):
         """Player 1 (height=1) lands on a position with:
         - Player 2: height=1 (capturable, since 1 >= 1)
         - Player 3: height=2 (NOT capturable, since 1 < 2)
@@ -485,6 +481,7 @@ class TestCaptureChoiceHeightFilter:
 # ---------------------------------------------------------------------------
 # 6. Capture choice grants extra rolls
 # ---------------------------------------------------------------------------
+
 
 class TestCaptureChoiceGrantsExtraRolls:
     """After resolving a capture choice, extra rolls are granted as normal."""
@@ -558,13 +555,8 @@ class TestCaptureChoiceGrantsExtraRolls:
 
         # Extra roll granted: either through extra_rolls counter or RollGranted event
         roll_granted_events = [e for e in result.events if isinstance(e, RollGranted)]
-        has_extra_roll = (
-            len(roll_granted_events) > 0
-            or new_state.current_turn.extra_rolls > 0
-        )
-        assert has_extra_roll, (
-            "Capture choice should grant extra rolls equal to captured height"
-        )
+        has_extra_roll = len(roll_granted_events) > 0 or new_state.current_turn.extra_rolls > 0
+        assert has_extra_roll, "Capture choice should grant extra rolls equal to captured height"
 
     def test_capture_choice_grants_extra_rolls_for_tall_stack(
         self, standard_board_setup: BoardSetup
@@ -648,12 +640,11 @@ class TestCaptureChoiceGrantsExtraRolls:
 # 7. detect_collisions with multiple opponents (unit test)
 # ---------------------------------------------------------------------------
 
+
 class TestDetectMultipleCollisions:
     """Unit tests for detect_collisions() with multiple opponents at the same position."""
 
-    def test_detect_collisions_finds_multiple_opponents(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_detect_collisions_finds_multiple_opponents(self, standard_board_setup: BoardSetup):
         """Three players have stacks at the same absolute position.
 
         Setup (squares_to_homestretch=50):
@@ -702,9 +693,7 @@ class TestDetectMultipleCollisions:
         moving_player = next(p for p in state.players if p.player_id == PLAYER_1_ID)
         moved_piece = next(s for s in moving_player.stacks if s.stack_id == "stack_1")
 
-        collisions = detect_collisions(
-            state, moved_piece, moving_player, standard_board_setup
-        )
+        collisions = detect_collisions(state, moved_piece, moving_player, standard_board_setup)
 
         # Should find collisions with Player 2, 3, and 4 (3 total)
         assert len(collisions) == 3
@@ -714,9 +703,7 @@ class TestDetectMultipleCollisions:
         assert PLAYER_3_ID in collision_player_ids
         assert PLAYER_4_ID in collision_player_ids
 
-    def test_detect_collisions_finds_two_opponents(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_detect_collisions_finds_two_opponents(self, standard_board_setup: BoardSetup):
         """Two opponents at the same position as the moved piece.
 
         Setup:
@@ -757,9 +744,7 @@ class TestDetectMultipleCollisions:
         moving_player = next(p for p in state.players if p.player_id == PLAYER_1_ID)
         moved_piece = next(s for s in moving_player.stacks if s.stack_id == "stack_1")
 
-        collisions = detect_collisions(
-            state, moved_piece, moving_player, standard_board_setup
-        )
+        collisions = detect_collisions(state, moved_piece, moving_player, standard_board_setup)
 
         assert len(collisions) == 2
 
@@ -767,9 +752,7 @@ class TestDetectMultipleCollisions:
         assert PLAYER_2_ID in collision_player_ids
         assert PLAYER_3_ID in collision_player_ids
 
-    def test_detect_collisions_ignores_non_road_stacks(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_detect_collisions_ignores_non_road_stacks(self, standard_board_setup: BoardSetup):
         """Stacks in HELL, HOMESTRETCH, or HEAVEN should not count as collisions."""
         p1_stacks = [
             create_stack("stack_1", StackState.ROAD, 1, 5),
@@ -803,9 +786,7 @@ class TestDetectMultipleCollisions:
         moving_player = next(p for p in state.players if p.player_id == PLAYER_1_ID)
         moved_piece = next(s for s in moving_player.stacks if s.stack_id == "stack_1")
 
-        collisions = detect_collisions(
-            state, moved_piece, moving_player, standard_board_setup
-        )
+        collisions = detect_collisions(state, moved_piece, moving_player, standard_board_setup)
 
         # Only Player 3's ROAD stack should be detected
         assert len(collisions) == 1

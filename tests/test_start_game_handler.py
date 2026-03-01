@@ -52,11 +52,15 @@ class TestBuildGameSettingsFromRoom:
         assert settings.get_out_rolls == [6]
 
         # Check player attributes
-        assert str(settings.player_attributes[0].player_id) == "00000000-0000-0000-0000-000000000001"
+        assert (
+            str(settings.player_attributes[0].player_id) == "00000000-0000-0000-0000-000000000001"
+        )
         assert settings.player_attributes[0].name == "Alice"
         assert settings.player_attributes[0].color == "red"
 
-        assert str(settings.player_attributes[1].player_id) == "00000000-0000-0000-0000-000000000002"
+        assert (
+            str(settings.player_attributes[1].player_id) == "00000000-0000-0000-0000-000000000002"
+        )
         assert settings.player_attributes[1].name == "Bob"
         assert settings.player_attributes[1].color == "blue"
 

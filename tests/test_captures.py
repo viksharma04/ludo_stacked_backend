@@ -261,7 +261,9 @@ class TestSafeSpaces:
 
         # Move the stack
         if "stack_1" in state.current_turn.legal_moves:
-            result = process_action(state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID)
+            result = process_action(
+                state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID
+            )
             assert result.success
 
             # Verify NO capture event (safe space)

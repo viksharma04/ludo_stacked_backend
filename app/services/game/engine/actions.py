@@ -16,12 +16,8 @@ class MoveAction(BaseModel):
     """Player selects a stack to move."""
 
     action_type: Literal["move"] = "move"
-    stack_id: str = Field(
-        ..., description="ID of the stack to move"
-    )
-    roll_value: int = Field(
-        ..., description="Which roll value to consume from rolls_to_allocate"
-    )
+    stack_id: str = Field(..., description="ID of the stack to move")
+    roll_value: int = Field(..., description="Which roll value to consume from rolls_to_allocate")
 
 
 class CaptureChoiceAction(BaseModel):

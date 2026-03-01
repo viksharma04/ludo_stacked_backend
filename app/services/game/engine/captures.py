@@ -221,8 +221,7 @@ def resolve_stacking(
 
     # Remove the two old stacks, add the new one
     remaining_stacks = [
-        s for s in player.stacks
-        if s.stack_id not in (piece1.stack_id, piece2.stack_id)
+        s for s in player.stacks if s.stack_id not in (piece1.stack_id, piece2.stack_id)
     ]
     updated_stacks = [*remaining_stacks, new_stack]
 
@@ -435,9 +434,7 @@ def process_capture_choice(
     """
     current_turn = state.current_turn
     if current_turn is None or current_turn.pending_capture is None:
-        return ProcessResult.failure(
-            "NO_PENDING_CAPTURE", "No pending capture to resolve"
-        )
+        return ProcessResult.failure("NO_PENDING_CAPTURE", "No pending capture to resolve")
 
     pending = current_turn.pending_capture
 
@@ -467,26 +464,16 @@ def process_capture_choice(
         )
 
     # Find the target player and stack
-    target_player = next(
-        (p for p in state.players if p.player_id == target_player_id), None
-    )
+    target_player = next((p for p in state.players if p.player_id == target_player_id), None)
     if target_player is None:
-        return ProcessResult.failure(
-            "PLAYER_NOT_FOUND", f"Player {target_player_id} not found"
-        )
+        return ProcessResult.failure("PLAYER_NOT_FOUND", f"Player {target_player_id} not found")
 
-    target_stack = next(
-        (s for s in target_player.stacks if s.stack_id == target_stack_id), None
-    )
+    target_stack = next((s for s in target_player.stacks if s.stack_id == target_stack_id), None)
     if target_stack is None:
-        return ProcessResult.failure(
-            "STACK_NOT_FOUND", f"Stack {target_stack_id} not found"
-        )
+        return ProcessResult.failure("STACK_NOT_FOUND", f"Stack {target_stack_id} not found")
 
     # Find the capturing player and their moving stack
-    capturing_player = next(
-        p for p in state.players if p.player_id == player_id
-    )
+    capturing_player = next(p for p in state.players if p.player_id == player_id)
     moving_stack = next(
         (s for s in capturing_player.stacks if s.stack_id == pending.moving_stack_id),
         None,
@@ -507,11 +494,10 @@ def process_capture_choice(
     events.extend(collision_result.events)
 
     # Clear pending_capture
-    updated_turn = state.current_turn.model_copy(
-        update={"pending_capture": None}
-    )
+    updated_turn = state.current_turn.model_copy(update={"pending_capture": None})
     state = state.model_copy(update={"current_turn": updated_turn})
 
     # Resume post-move flow
     from .movement import resume_after_capture
+
     return resume_after_capture(state, events)

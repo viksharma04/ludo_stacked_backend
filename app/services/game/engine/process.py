@@ -170,9 +170,7 @@ def process_start_game(state: GameState) -> ProcessResult:
     logger.debug("Created first turn for player with turn_order=1")
 
     # Get player order for the event
-    player_order = [
-        p.player_id for p in sorted(state.players, key=lambda p: p.turn_order)
-    ]
+    player_order = [p.player_id for p in sorted(state.players, key=lambda p: p.turn_order)]
     first_player_id = (
         next(p.player_id for p in state.players if p.turn_order == 1)
         if state.players
