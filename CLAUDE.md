@@ -87,6 +87,7 @@ Related: **`app/services/game/start_game.py`** - Game initialization, creates in
 - **Router Organization**: Modular endpoints in `app/routers/` with versioned prefixes
 - **Authenticated DB Access**: Use `get_authenticated_supabase_client(token)` with `CurrentUserToken` to respect Supabase RLS policies (e.g., `auth.uid() = id`)
 - **Lifespan Management**: Async context manager in `main.py` for startup/shutdown of WebSocket manager and Redis
+- **Multi-roll allocation**: `AwaitingChoice` presents all accumulated rolls with legal moves via `RollMoveGroup`; player specifies `roll_value` in `MoveAction`
 
 ### WebSocket Architecture
 
@@ -131,8 +132,6 @@ Tests live in `tests/` and cover the game engine exclusively. Run with `uv run p
 ### Known Implementation Gaps (tracked by failing tests)
 
 - `_create_board_setup()`: `squares_to_homestretch` uses `8g+1` instead of `8g+2`; 2-player uses consecutive starts instead of opposite corners
-- Roll allocation is FIFO (`rolls[0]`) — should allow player choice of which roll to use
-- No-legal-moves for a roll ends turn — should skip to next accumulated roll
 - HELL exit doesn't trigger collision detection (no merge with own stack at starting position)
 - Homestretch collision detection not implemented (stacking should work in homestretch)
 
