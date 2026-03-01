@@ -12,7 +12,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.schemas.game_engine import LegalMoveGroup, Stack, StackState
+from app.schemas.game_engine import LegalMoveGroup, RollMoveGroup, Stack, StackState
 
 
 class GameEvent(BaseModel):
@@ -144,8 +144,9 @@ class AwaitingChoice(GameEvent):
 
     event_type: Literal["awaiting_choice"] = "awaiting_choice"
     player_id: UUID
-    legal_moves: list[LegalMoveGroup] = Field(..., description="Legal moves grouped by parent stack")
-    roll_to_allocate: int
+    available_moves: list["RollMoveGroup"] = Field(
+        ..., description="Legal moves grouped by roll value, then by parent stack"
+    )
 
 
 class AwaitingCaptureChoice(GameEvent):
