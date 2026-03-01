@@ -67,7 +67,7 @@ Related: **`app/services/game/start_game.py`** - Game initialization, creates in
 - `squares_to_homestretch = 8g + 2` (ROAD: progress 0 to sth-1; HOMESTRETCH: sth to stw-1)
 - `squares_to_win = 9g + 1` (HEAVEN at exactly this progress)
 - `homestretch_length = g - 1`
-- `safe_offset = 2g - 2` from each starting position
+- `safe_offset = 2g - 5` from each starting position
 - Board is always complete regardless of player count (all 4 starts, all 8 safe spaces)
 - 2 players: opposite corners (1st and 3rd starting positions)
 - 3 players: first three starting positions
@@ -98,7 +98,7 @@ Related: **`app/services/game/start_game.py`** - Game initialization, creates in
   3. Server validates and responds with `authenticated` or `error`
   4. 30-second timeout for authentication
 - **Connection Manager** (`app/services/websocket/manager.py`): Tracks connections locally and in Redis for distributed state, manages room subscriptions
-- **Handler Pattern** (`app/services/websocket/handlers/`): Decorator-based handler registration, use `require_authenticated()` for auth-required handlers
+- **Handler Pattern** (`app/services/websocket/handlers/`): `base.py` provides decorator-based handler registration, use `require_authenticated()` for auth-required handlers
 - **Message Protocol**: JSON messages with `type` field:
   - Auth: `authenticate`, `authenticated`
   - Core: `ping`, `pong`, `connected`, `error`
@@ -127,7 +127,7 @@ Tests live in `tests/` and cover the game engine exclusively. Run with `uv run p
 - Test files map to engine modules: `test_movement.py`, `test_rolling.py`, `test_captures.py`, `test_validation.py`, `test_stack_utils.py`, `test_stacking.py`, `test_events.py`, `test_game_finished.py`, `test_get_out_of_hell.py`, `test_start_game_handler.py`, `test_board_geometry.py`, `test_homestretch_heaven.py`, `test_hell_exit_collisions.py`, `test_multi_roll_allocation.py`, `test_capture_chains.py`, `test_capture_choice.py`, `test_full_turn_flow.py`
 - Tests construct `GameState` directly and call engine functions — no HTTP/WebSocket integration tests yet
 - **Failing tests are intentional** — they encode intended game rules and serve as the implementation backlog. See `docs/plans/2026-02-28-core-engine-test-suite-design.md` for details.
-- **Board fixtures use grid_length=6**: `squares_to_win=55`, `squares_to_homestretch=50`, `safe_spaces=[0,10,13,23,26,36,39,49]`
+- **Board fixtures use grid_length=6**: `squares_to_win=55`, `squares_to_homestretch=50`, `safe_spaces=[0,7,13,20,26,33,39,46]`
 
 ### Known Implementation Gaps (tracked by failing tests)
 

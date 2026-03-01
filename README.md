@@ -82,32 +82,32 @@ app/
 │   │       ├── rolling.py   # Dice roll processing
 │   │       ├── movement.py  # Token/stack movement
 │   │       ├── legal_moves.py # Legal move calculation
-│   │       └── captures.py  # Collision & capture resolution
+│   │       ├── captures.py  # Collision & capture resolution
+│   │       └── stack_utils.py # Stack ID utilities
 │   ├── room/
 │   │   └── service.py   # Room management service
 │   └── websocket/
 │       ├── auth.py      # WebSocket JWT validation
 │       ├── manager.py   # Connection state manager
 │       └── handlers/    # Message handlers
-│           ├── authenticate.py  # Authentication handler
-│           ├── ping.py          # Ping/pong keepalive
-│           ├── ready.py         # Toggle ready state
-│           ├── leave.py         # Leave room handler
-│           ├── start_game.py    # Start game handler
-│           └── game.py          # Game action handler
+│           ├── base.py            # Handler registration infrastructure
+│           ├── authenticate.py    # Authentication handler
+│           ├── ping.py            # Ping/pong keepalive
+│           ├── ready.py           # Toggle ready state
+│           ├── leave.py           # Leave room handler
+│           ├── start_game.py      # Start game handler
+│           └── game.py            # Game action handler
 └── utils/
-    └── board_renderer.py  # Board visualization utilities
+    └── board_render.py   # Board visualization utilities
 docs/
-├── redis.md                     # Redis integration guide
-├── websockets.md                # WebSocket implementation guide
-├── db_schema.md                 # Database schema reference
-├── game_engine.md               # Game engine architecture
-├── frontend_integration.md      # Frontend integration guide
-├── frontend_roll_granted.md     # Roll granted event details
-├── frontend_start_game.md       # Start game flow
-└── frontend_stack_split_changes.md  # Stack split mechanics
-tests/
-└── test_stacking.py     # Game mechanics unit tests
+├── redis.md              # Redis integration guide
+├── websockets.md         # WebSocket implementation guide
+├── db_schema.md          # Database schema reference
+├── migrations/           # SQL migration scripts
+│   └── find_or_create_room.sql
+└── plans/                # Design & implementation plans
+tests/                    # Game engine unit tests (18 test files)
+└── conftest.py           # Shared fixtures & helpers
 ```
 
 ## API Endpoints
@@ -249,7 +249,7 @@ The game engine (`app/services/game/engine/`) implements Ludo Stacked game mecha
 - **Captures**: Landing on opponent token sends it to HELL, grants bonus roll
 - **Safe Spaces**: Starting positions and marked spaces where tokens cannot be captured
 
-See [docs/game_engine.md](docs/game_engine.md) for detailed architecture documentation.
+See the CLAUDE.md file for detailed engine architecture and board geometry documentation.
 
 ## Learn More
 

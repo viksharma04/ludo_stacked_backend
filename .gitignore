@@ -17,6 +17,9 @@ htmlcov/
 __pycache__/
 .ruff_cache/
 
+# Claude plans
+docs/plans/
+
 # Test files
 test.py
 test.json
