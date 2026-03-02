@@ -1,9 +1,10 @@
 """Tests for handle_game_action WebSocket handler."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.schemas.ws import GameActionPayload, MessageType, WSClientMessage
+import pytest
+
+from app.schemas.ws import MessageType, WSClientMessage
 from app.services.websocket.handlers.base import HandlerContext
 from app.services.websocket.handlers.game import handle_game_action
 
@@ -145,7 +146,7 @@ class TestHandleGameActionErrors:
         assert result.response.payload["error_code"] == "INVALID_ACTION"
 
     @pytest.mark.asyncio
-    @patch("app.services.game.engine.process_action")
+    @patch("app.services.websocket.handlers.game.process_action")
     @patch("app.services.websocket.handlers.game.build_action_from_payload")
     @patch("app.schemas.game_engine.GameState.model_validate")
     @patch("app.services.websocket.handlers.game.get_game_state", new_callable=AsyncMock)
@@ -174,7 +175,7 @@ class TestHandleGameActionSuccess:
 
     @pytest.mark.asyncio
     @patch("app.services.websocket.handlers.game.save_game_state", new_callable=AsyncMock)
-    @patch("app.services.game.engine.process_action")
+    @patch("app.services.websocket.handlers.game.process_action")
     @patch("app.services.websocket.handlers.game.build_action_from_payload")
     @patch("app.schemas.game_engine.GameState.model_validate")
     @patch("app.services.websocket.handlers.game.get_game_state", new_callable=AsyncMock)
@@ -208,7 +209,7 @@ class TestHandleGameActionSuccess:
 
     @pytest.mark.asyncio
     @patch("app.services.websocket.handlers.game.save_game_state", new_callable=AsyncMock)
-    @patch("app.services.game.engine.process_action")
+    @patch("app.services.websocket.handlers.game.process_action")
     @patch("app.services.websocket.handlers.game.build_action_from_payload")
     @patch("app.schemas.game_engine.GameState.model_validate")
     @patch("app.services.websocket.handlers.game.get_game_state", new_callable=AsyncMock)

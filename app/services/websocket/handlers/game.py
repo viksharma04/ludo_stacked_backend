@@ -3,16 +3,14 @@
 import logging
 from uuid import UUID
 
+from app.schemas.game_engine import GameState
 from app.schemas.ws import (
     GameActionPayload,
     GameEventsPayload,
     MessageType,
     WSServerMessage,
 )
-from app.services.game.engine import (
-    ProcessResult,
-    build_action_from_payload,
-)
+from app.services.game import ProcessResult, build_action_from_payload, process_action
 from app.services.game.state import get_game_state, save_game_state
 
 from . import handler
@@ -80,9 +78,6 @@ async def handle_game_action(ctx: HandlerContext) -> HandlerResult:
             request_id=ctx.message.request_id,
         )
 
-    # Import here to avoid circular imports
-    from app.schemas.game_engine import GameState
-
     try:
         game_state = GameState.model_validate(game_state_dict)
     except Exception:
@@ -118,8 +113,6 @@ async def handle_game_action(ctx: HandlerContext) -> HandlerResult:
         )
 
     # Process through game engine
-    from app.services.game.engine import process_action
-
     try:
         player_id = UUID(ctx.user_id)
     except ValueError:

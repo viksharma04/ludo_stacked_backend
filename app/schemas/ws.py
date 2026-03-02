@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -30,24 +30,9 @@ class MessageType(str, Enum):
     GAME_ERROR = "game_error"
 
 
-class WSCloseCode:
+class WSCloseCode(IntEnum):
     """WebSocket close codes (RFC 6455 + custom)."""
 
-    # Standard RFC 6455 codes
-    NORMAL = 1000
-    GOING_AWAY = 1001
-    PROTOCOL_ERROR = 1002
-    UNSUPPORTED_DATA = 1003
-    INVALID_DATA = 1007
-    POLICY_VIOLATION = 1008
-    MESSAGE_TOO_BIG = 1009
-    INTERNAL_ERROR = 1011
-
-    # Custom application codes (4000-4999)
-    AUTH_FAILED = 4001
-    AUTH_EXPIRED = 4002
-    ROOM_NOT_FOUND = 4003
-    ROOM_ACCESS_DENIED = 4004
     AUTH_TIMEOUT = 4005
 
 

@@ -292,11 +292,11 @@ class ConnectionManager:
         if not stale_connections:
             return
 
-        # Close websockets in parallel
-        await asyncio.gather(*[self._close_websocket(conn_id) for conn_id in stale_connections])
+        async def _close_and_disconnect(conn_id: str) -> None:
+            await self._close_websocket(conn_id)
+            await self.disconnect(conn_id)
 
-        # Disconnect all stale connections in parallel
-        await asyncio.gather(*[self.disconnect(conn_id) for conn_id in stale_connections])
+        await asyncio.gather(*[_close_and_disconnect(conn_id) for conn_id in stale_connections])
 
         logger.info("Cleaned up %d stale connections", len(stale_connections))
 
