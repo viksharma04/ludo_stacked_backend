@@ -1,6 +1,5 @@
 """Base types and helpers for WebSocket message handlers."""
 
-import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -38,46 +37,6 @@ class HandlerResult:
     response: WSServerMessage | None = None
     broadcast: WSServerMessage | None = None
     room_id: str | None = None
-
-
-def validate_request_id(request_id: str | None, error_type: MessageType) -> HandlerResult | None:
-    """Validate that request_id exists and is a valid UUID.
-
-    Args:
-        request_id: The request_id to validate.
-        error_type: The MessageType to use for error responses.
-
-    Returns:
-        HandlerResult with error if validation fails, None if valid.
-    """
-    if not request_id:
-        return HandlerResult(
-            success=False,
-            response=WSServerMessage(
-                type=error_type,
-                payload=ErrorPayload(
-                    error_code="VALIDATION_ERROR",
-                    message="request_id is required",
-                ).model_dump(),
-            ),
-        )
-
-    try:
-        uuid.UUID(request_id)
-    except ValueError:
-        return HandlerResult(
-            success=False,
-            response=WSServerMessage(
-                type=error_type,
-                request_id=request_id,
-                payload=ErrorPayload(
-                    error_code="VALIDATION_ERROR",
-                    message="request_id must be a valid UUID",
-                ).model_dump(),
-            ),
-        )
-
-    return None
 
 
 def validate_payload[T: BaseModel](

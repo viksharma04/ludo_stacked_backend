@@ -5,7 +5,6 @@ from uuid import UUID
 
 from app.schemas.ws import (
     GameActionPayload,
-    GameErrorPayload,
     GameEventsPayload,
     MessageType,
     WSServerMessage,
@@ -14,6 +13,7 @@ from app.services.game.engine import (
     ProcessResult,
     build_action_from_payload,
 )
+from app.services.game.state import get_game_state, save_game_state
 
 from . import handler
 from .base import (
@@ -25,26 +25,6 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# Placeholder for game state storage - will be replaced with Redis service
-_game_states: dict[str, dict] = {}
-
-
-async def get_game_state(room_id: str) -> dict | None:
-    """Get game state for a room from storage.
-
-    TODO: Replace with Redis-based game service.
-    """
-    return _game_states.get(room_id)
-
-
-async def save_game_state(room_id: str, state: dict) -> None:
-    """Save game state for a room to storage.
-
-    TODO: Replace with Redis-based game service.
-    """
-    _game_states[room_id] = state
 
 
 @handler(MessageType.GAME_ACTION)
@@ -121,8 +101,10 @@ async def handle_game_action(ctx: HandlerContext) -> HandlerResult:
         }
         if payload.value is not None:
             action_dict["value"] = payload.value
-        if payload.token_or_stack_id is not None:
-            action_dict["token_or_stack_id"] = payload.token_or_stack_id
+        if payload.stack_id is not None:
+            action_dict["stack_id"] = payload.stack_id
+        if payload.roll_value is not None:
+            action_dict["roll_value"] = payload.roll_value
         if payload.choice is not None:
             action_dict["choice"] = payload.choice
 
@@ -158,16 +140,11 @@ async def handle_game_action(ctx: HandlerContext) -> HandlerResult:
             result.error_code,
             result.error_message,
         )
-        return HandlerResult(
-            success=False,
-            response=WSServerMessage(
-                type=MessageType.GAME_ERROR,
-                request_id=ctx.message.request_id,
-                payload=GameErrorPayload(
-                    error_code=result.error_code or "PROCESSING_ERROR",
-                    message=result.error_message or "Failed to process action",
-                ).model_dump(),
-            ),
+        return error_response(
+            error_code=result.error_code or "PROCESSING_ERROR",
+            message=result.error_message or "Failed to process action",
+            error_type=MessageType.GAME_ERROR,
+            request_id=ctx.message.request_id,
         )
 
     # Save new state

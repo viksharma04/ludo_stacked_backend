@@ -10,6 +10,7 @@ from app.schemas.ws import (
     WSServerMessage,
 )
 from app.services.game import StartGameAction, initialize_game, process_action
+from app.services.game.state import get_game_state, save_game_state
 from app.services.room.service import RoomSnapshotData, get_room_service
 
 from . import handler
@@ -19,7 +20,6 @@ from .base import (
     error_response,
     require_authenticated,
 )
-from .game import get_game_state, save_game_state
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -17,7 +15,6 @@ class MessageType(str, Enum):
     # Core
     PING = "ping"
     PONG = "pong"
-    CONNECTED = "connected"
     ERROR = "error"
     ROOM_UPDATED = "room_updated"
     TOGGLE_READY = "toggle_ready"
@@ -87,7 +84,7 @@ class SeatSnapshot(BaseModel):
 class RoomSnapshot(BaseModel):
     """Authoritative room snapshot for lobby rendering.
 
-    Used as payload for CREATE_ROOM_OK, JOIN_ROOM_OK, and ROOM_UPDATED messages.
+    Used as payload for ROOM_UPDATED and AUTHENTICATED messages.
     """
 
     room_id: str
@@ -100,23 +97,14 @@ class RoomSnapshot(BaseModel):
     version: int = 0
 
 
-class ConnectedPayload(BaseModel):
-    """Payload for the 'connected' message."""
-
-    connection_id: str
-    user_id: str
-    server_id: str
-    room: RoomSnapshot
-
-
 class PongPayload(BaseModel):
     """Payload for the 'pong' message."""
 
-    server_time: datetime = Field(default_factory=lambda: datetime.now())
+    server_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class ErrorPayload(BaseModel):
-    """Payload for error messages (ERROR, CREATE_ROOM_ERROR, JOIN_ROOM_ERROR)."""
+    """Payload for error messages."""
 
     error_code: str
     message: str
@@ -127,12 +115,6 @@ class RoomClosedPayload(BaseModel):
 
     reason: str = "host_left"
     room_id: str
-
-
-class JoinRoomPayload(BaseModel):
-    """Payload for the 'join_room' message from client."""
-
-    room_code: str = Field(..., min_length=6, max_length=6, pattern="^[A-Z0-9]{6}$")
 
 
 class AuthenticatePayload(BaseModel):
@@ -164,8 +146,9 @@ class GameActionPayload(BaseModel):
         ..., description="Action type: 'roll', 'move', 'capture_choice', 'start_game'"
     )
     value: int | None = Field(None, ge=1, le=6, description="Dice value for roll action")
-    token_or_stack_id: str | None = Field(
-        None, description="Token/stack ID for move action"
+    stack_id: str | None = Field(None, description="Stack ID for move action")
+    roll_value: int | None = Field(
+        None, ge=1, le=6, description="Which roll value to consume for move action"
     )
     choice: str | None = Field(None, description="Choice for capture_choice action")
 
@@ -182,33 +165,8 @@ class GameEventsPayload(BaseModel):
     )
 
 
-class GameStatePayload(BaseModel):
-    """Payload for GAME_STATE messages to clients.
-
-    Contains the full game state for reconciliation or initial sync.
-    """
-
-    state: dict[str, Any] = Field(..., description="Full game state (serialized)")
-
-
-class GameErrorPayload(BaseModel):
-    """Payload for GAME_ERROR messages to clients."""
-
-    error_code: str
-    message: str
-
-
-class StartGamePayload(BaseModel):
-    """Payload for START_GAME messages from client.
-
-    Currently empty - allows future extension for game settings.
-    """
-
-    pass
-
-
 class GameStartedPayload(BaseModel):
-    """Payload for GAME_STARTED message to host after starting the game.
+    """Payload for GAME_STARTED message broadcast to all players.
 
     Contains the initial game state and startup events.
     """
