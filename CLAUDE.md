@@ -58,7 +58,9 @@ The game engine handles all Ludo Stacked game mechanics:
 - **`captures.py`** - Collision resolution, capture mechanics
 - **`stack_utils.py`** - Composition-based stack ID utilities (merge, split, naming conventions)
 
-Related: **`app/services/game/start_game.py`** - Game initialization, creates initial stacks and board setup.
+Related:
+- **`app/services/game/start_game.py`** - Game initialization, creates initial stacks and board setup
+- **`app/services/game/state.py`** - In-memory game state storage (`get_game_state`, `save_game_state`)
 
 ### Board Geometry (grid_length = g)
 
@@ -103,7 +105,7 @@ Related: **`app/services/game/start_game.py`** - Game initialization, creates in
 - **Handler Pattern** (`app/services/websocket/handlers/`): `base.py` provides decorator-based handler registration, use `require_authenticated()` for auth-required handlers
 - **Message Protocol**: JSON messages with `type` field:
   - Auth: `authenticate`, `authenticated`
-  - Core: `ping`, `pong`, `connected`, `error`
+  - Core: `ping`, `pong`, `error`
   - Room: `toggle_ready`, `leave_room`, `room_updated`, `room_closed`
   - Game: `start_game`, `game_started`, `game_action`, `game_events`, `game_state`, `game_error`
 - **Redis Keys**:
@@ -123,11 +125,12 @@ Room creation uses a Supabase RPC stored procedure (`find_or_create_room`) for a
 
 ### Testing
 
-Tests live in `tests/` and cover the game engine exclusively. Run with `uv run pytest`.
+Tests live in `tests/` and cover the game engine and WebSocket handlers. Run with `uv run pytest`.
 
 - **`conftest.py`** - Shared fixtures: fixed player UUIDs, standard/two-player board setups, helper state builders
-- Test files map to engine modules: `test_movement.py`, `test_rolling.py`, `test_captures.py`, `test_validation.py`, `test_stack_utils.py`, `test_stacking.py`, `test_events.py`, `test_game_finished.py`, `test_get_out_of_hell.py`, `test_start_game_handler.py`, `test_board_geometry.py`, `test_homestretch_heaven.py`, `test_hell_exit_collisions.py`, `test_multi_roll_allocation.py`, `test_capture_chains.py`, `test_capture_choice.py`, `test_full_turn_flow.py`
-- Tests construct `GameState` directly and call engine functions — no HTTP/WebSocket integration tests yet
+- Engine test files: `test_movement.py`, `test_rolling.py`, `test_captures.py`, `test_validation.py`, `test_stack_utils.py`, `test_stacking.py`, `test_events.py`, `test_game_finished.py`, `test_get_out_of_hell.py`, `test_start_game_handler.py`, `test_board_geometry.py`, `test_homestretch_heaven.py`, `test_hell_exit_collisions.py`, `test_multi_roll_allocation.py`, `test_capture_chains.py`, `test_capture_choice.py`, `test_full_turn_flow.py`
+- WebSocket handler tests: `test_ws_start_game_handler_flow.py`, `test_ws_game_action_handler.py` — unit tests with mocked dependencies
+- Engine tests construct `GameState` directly and call engine functions; handler tests mock services and validate handler logic
 - All tests currently pass. When new game rules are added, failing tests may be used as the implementation backlog. See `docs/plans/2026-02-28-core-engine-test-suite-design.md` for design details.
 - **Board fixtures use grid_length=6**: `squares_to_win=55`, `squares_to_homestretch=50`, `safe_spaces=[0,7,13,20,26,33,39,46]`
 
