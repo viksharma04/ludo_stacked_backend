@@ -1,0 +1,258 @@
+"""Tests for handle_start_game WebSocket handler."""
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
+
+from app.schemas.ws import MessageType, WSClientMessage
+from app.services.room.service import RoomSnapshotData, SeatData
+from app.services.websocket.handlers.base import HandlerContext
+from app.services.websocket.handlers.start_game import handle_start_game
+
+# Fixed UUIDs
+HOST_ID = "00000000-0000-0000-0000-000000000001"
+PLAYER_2_ID = "00000000-0000-0000-0000-000000000002"
+ROOM_ID = "room-test-123"
+CONN_ID = "conn-test-456"
+
+
+def _make_context(
+    user_id: str = HOST_ID,
+    authenticated: bool = True,
+    room_id: str | None = ROOM_ID,
+    connection_exists: bool = True,
+) -> HandlerContext:
+    """Build a HandlerContext with a mocked manager."""
+    manager = MagicMock()
+
+    if connection_exists:
+        connection = MagicMock()
+        connection.authenticated = authenticated
+        connection.room_id = room_id
+        connection.user_id = user_id
+        manager.get_connection.return_value = connection
+    else:
+        manager.get_connection.return_value = None
+
+    message = WSClientMessage(
+        type=MessageType.START_GAME,
+        request_id="00000000-0000-0000-0000-aaaaaaaaaaaa",
+    )
+    return HandlerContext(
+        connection_id=CONN_ID,
+        user_id=user_id,
+        message=message,
+        manager=manager,
+    )
+
+
+def _ready_room_snapshot(
+    status: str = "ready_to_start",
+    host_id: str = HOST_ID,
+    include_player2: bool = True,
+) -> RoomSnapshotData:
+    """Build a RoomSnapshotData with host and optionally a second player."""
+    seats = [
+        SeatData(
+            seat_index=0,
+            user_id=host_id,
+            display_name="Host",
+            ready="ready",
+            connected=True,
+            is_host=True,
+        ),
+    ]
+    if include_player2:
+        seats.append(
+            SeatData(
+                seat_index=1,
+                user_id=PLAYER_2_ID,
+                display_name="Player 2",
+                ready="ready",
+                connected=True,
+                is_host=False,
+            ),
+        )
+    # Fill remaining seats as empty
+    for i in range(len(seats), 4):
+        seats.append(SeatData(seat_index=i))
+
+    return RoomSnapshotData(
+        room_id=ROOM_ID,
+        code="ABC123",
+        status=status,
+        visibility="private",
+        ruleset_id="classic",
+        max_players=4,
+        seats=seats,
+        version=1,
+    )
+
+
+class TestHandleStartGameErrors:
+    """Test error paths for handle_start_game handler."""
+
+    @pytest.mark.asyncio
+    async def test_not_authenticated(self) -> None:
+        ctx = _make_context(authenticated=False)
+        result = await handle_start_game(ctx)
+        assert not result.success
+        assert result.response is not None
+        assert result.response.payload["error_code"] == "NOT_AUTHENTICATED"
+
+    @pytest.mark.asyncio
+    async def test_no_connection(self) -> None:
+        ctx = _make_context(connection_exists=False)
+        result = await handle_start_game(ctx)
+        assert not result.success
+        assert result.response is not None
+        # require_authenticated fires first when connection is None
+        assert result.response.payload["error_code"] == "NOT_AUTHENTICATED"
+
+    @pytest.mark.asyncio
+    async def test_no_room_id(self) -> None:
+        ctx = _make_context(room_id=None)
+        result = await handle_start_game(ctx)
+        assert not result.success
+        assert result.response.payload["error_code"] == "NOT_IN_ROOM"
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_room_not_found(self, mock_get_room_service: MagicMock) -> None:
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = None
+        mock_get_room_service.return_value = mock_service
+
+        ctx = _make_context()
+        result = await handle_start_game(ctx)
+        assert not result.success
+        assert result.response.payload["error_code"] == "ROOM_NOT_FOUND"
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_user_not_seated(self, mock_get_room_service: MagicMock) -> None:
+        snapshot = _ready_room_snapshot()
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_get_room_service.return_value = mock_service
+
+        # Use a user_id that doesn't match any seat
+        ctx = _make_context(user_id="00000000-0000-0000-0000-999999999999")
+        result = await handle_start_game(ctx)
+        assert not result.success
+        assert result.response.payload["error_code"] == "NOT_SEATED"
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_not_host(self, mock_get_room_service: MagicMock) -> None:
+        snapshot = _ready_room_snapshot()
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_get_room_service.return_value = mock_service
+
+        # Player 2 is not the host
+        ctx = _make_context(user_id=PLAYER_2_ID)
+        result = await handle_start_game(ctx)
+        assert not result.success
+        assert result.response.payload["error_code"] == "NOT_HOST"
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_room_status_open(self, mock_get_room_service: MagicMock) -> None:
+        snapshot = _ready_room_snapshot(status="open")
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_get_room_service.return_value = mock_service
+
+        ctx = _make_context()
+        result = await handle_start_game(ctx)
+        assert not result.success
+        assert result.response.payload["error_code"] == "PLAYERS_NOT_READY"
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_room_status_in_game(self, mock_get_room_service: MagicMock) -> None:
+        snapshot = _ready_room_snapshot(status="in_game")
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_get_room_service.return_value = mock_service
+
+        ctx = _make_context()
+        result = await handle_start_game(ctx)
+        assert not result.success
+        assert result.response.payload["error_code"] == "GAME_ALREADY_STARTED"
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.get_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_game_already_exists(
+        self, mock_get_room_service: MagicMock, mock_get_game_state: AsyncMock
+    ) -> None:
+        snapshot = _ready_room_snapshot()
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_get_room_service.return_value = mock_service
+
+        mock_get_game_state.return_value = {"some": "state"}
+
+        ctx = _make_context()
+        result = await handle_start_game(ctx)
+        assert not result.success
+        assert result.response.payload["error_code"] == "GAME_ALREADY_STARTED"
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.get_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_fewer_than_two_players(
+        self, mock_get_room_service: MagicMock, mock_get_game_state: AsyncMock
+    ) -> None:
+        snapshot = _ready_room_snapshot(include_player2=False)
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_get_room_service.return_value = mock_service
+        mock_get_game_state.return_value = None
+
+        ctx = _make_context()
+        result = await handle_start_game(ctx)
+        assert not result.success
+        assert result.response.payload["error_code"] == "GAME_INIT_FAILED"
+
+
+class TestHandleStartGameSuccess:
+    """Test happy path for handle_start_game handler."""
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.save_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_happy_path(
+        self,
+        mock_get_room_service: MagicMock,
+        mock_get_game_state: AsyncMock,
+        mock_save_game_state: AsyncMock,
+    ) -> None:
+        snapshot = _ready_room_snapshot()
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_service.update_room_status_to_in_game = AsyncMock()
+        mock_get_room_service.return_value = mock_service
+        mock_get_game_state.return_value = None
+
+        ctx = _make_context()
+        result = await handle_start_game(ctx)
+
+        assert result.success
+        assert result.response is not None
+        assert result.response.type == MessageType.GAME_STARTED
+        assert result.response.request_id == ctx.message.request_id
+        assert "game_state" in result.response.payload
+        assert "events" in result.response.payload
+
+        assert result.broadcast is not None
+        assert result.broadcast.type == MessageType.GAME_STARTED
+        assert result.broadcast.request_id is None  # Broadcast has no request_id
+
+        assert result.room_id == ROOM_ID
+
+        mock_save_game_state.assert_called_once()
+        mock_service.update_room_status_to_in_game.assert_called_once_with(ROOM_ID)
