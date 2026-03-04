@@ -42,6 +42,8 @@ The WebSocket system provides:
 | Ping Handler | `app/services/websocket/handlers/ping.py` | PING/PONG keepalive |
 | Ready Handler | `app/services/websocket/handlers/ready.py` | TOGGLE_READY handler |
 | Leave Handler | `app/services/websocket/handlers/leave.py` | LEAVE_ROOM handler |
+| Start Game Handler | `app/services/websocket/handlers/start_game.py` | START_GAME handler |
+| Game Handler | `app/services/websocket/handlers/game.py` | GAME_ACTION handler |
 | Redis Client | `app/dependencies/redis.py` | Upstash Redis singleton |
 
 ## Connection Flow
@@ -142,19 +144,6 @@ with code 4005 (AUTH_TIMEOUT).
 }
 ```
 
-**Connected (legacy, for pre-authenticated connections)**
-```json
-{
-  "type": "connected",
-  "payload": {
-    "connection_id": "550e8400-e29b-41d4-a716-446655440000",
-    "user_id": "user-uuid",
-    "server_id": "server-1",
-    "room": { ... }
-  }
-}
-```
-
 **Pong (response to ping)**
 ```json
 {
@@ -207,6 +196,81 @@ with code 4005 (AUTH_TIMEOUT).
 }
 ```
 
+### Game Messages
+
+**Start Game (host only)**
+```json
+{
+  "type": "start_game",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Game Action (roll)**
+```json
+{
+  "type": "game_action",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "action_type": "roll",
+    "value": 5
+  }
+}
+```
+
+**Game Action (move)**
+```json
+{
+  "type": "game_action",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "action_type": "move",
+    "stack_id": "player-uuid_token_1",
+    "roll_value": 5
+  }
+}
+```
+
+**Game Started (broadcast to all players)**
+```json
+{
+  "type": "game_started",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "game_state": { "phase": "in_progress", "players": [...], ... },
+    "events": [
+      { "event_type": "game_started", "seq": 0 },
+      { "event_type": "turn_started", "player_id": "uuid", "seq": 1 }
+    ]
+  }
+}
+```
+
+**Game Events (broadcast)**
+```json
+{
+  "type": "game_events",
+  "payload": {
+    "events": [
+      { "event_type": "dice_rolled", "player_id": "uuid", "value": 5, "roll_number": 1, "grants_extra_roll": false, "seq": 2 },
+      { "event_type": "awaiting_choice", "player_id": "uuid", "legal_moves": ["token_1", "token_2"], "roll_to_allocate": 5, "seq": 3 }
+    ]
+  }
+}
+```
+
+**Game Error**
+```json
+{
+  "type": "game_error",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "error_code": "NOT_YOUR_TURN",
+    "message": "Wait for your turn"
+  }
+}
+```
+
 ## Message Types
 
 | Type | Direction | Description |
@@ -215,12 +279,17 @@ with code 4005 (AUTH_TIMEOUT).
 | `authenticated` | Server → Client | Authentication succeeded with room snapshot |
 | `ping` | Client → Server | Keepalive request (allowed before auth) |
 | `pong` | Server → Client | Keepalive response |
-| `connected` | Server → Client | Connection acknowledgment (legacy flow) |
 | `toggle_ready` | Client → Server | Toggle user's ready state (requires auth) |
 | `leave_room` | Client → Server | Leave the current room (requires auth) |
 | `room_updated` | Server → Client | Room state changed (broadcast) |
 | `room_closed` | Server → Client | Room was closed by host |
-| `error` | Server → Client | Error notification |
+| `start_game` | Client → Server | Host starts the game (requires auth + host) |
+| `game_started` | Server → Client | Game started with initial state (broadcast to all players) |
+| `game_action` | Client → Server | Player game action (roll, move, capture_choice) |
+| `game_events` | Server → Client | Game events broadcast to room |
+| `game_state` | Server → Client | Full game state (reconnection sync) |
+| `game_error` | Server → Client | Game action error |
+| `error` | Server → Client | General error notification |
 
 ## Room State
 
@@ -248,16 +317,13 @@ Each seat in a room has the following fields:
 
 ## Close Codes
 
+The `WSCloseCode` enum defines custom application close codes:
+
 | Code | Name | Description |
 |------|------|-------------|
-| 1000 | NORMAL | Normal closure |
-| 1001 | GOING_AWAY | Server shutdown or client navigating away |
-| 1007 | INVALID_DATA | Invalid message format |
-| 4001 | AUTH_FAILED | JWT validation failed |
-| 4002 | AUTH_EXPIRED | JWT has expired |
-| 4003 | ROOM_NOT_FOUND | Room code doesn't exist or room is closed |
-| 4004 | ROOM_ACCESS_DENIED | User doesn't have a seat in the room |
 | 4005 | AUTH_TIMEOUT | Client didn't send authenticate message within 30 seconds |
+
+Standard RFC 6455 codes (1000, 1001, etc.) are used directly as integer literals where needed.
 
 ## Redis State
 
@@ -284,7 +350,7 @@ UPSTASH_REDIS_REST_TOKEN=xxx
 
 # WebSocket settings (optional, shown with defaults)
 WS_HEARTBEAT_INTERVAL=30    # Cleanup check interval in seconds
-WS_CONNECTION_TIMEOUT=60    # Max seconds without heartbeat before disconnect
+WS_CONNECTION_TIMEOUT=120   # Max seconds without heartbeat before disconnect
 ```
 
 ## Usage Examples
@@ -402,29 +468,29 @@ from app.services.websocket.manager import get_connection_manager
 
 manager = get_connection_manager()
 
-# Connect (called internally by ws router)
-connection = await manager.connect(websocket, user_id, room_id, room_snapshot)
+# Register unauthenticated connection (called by ws router on connect)
+connection = manager.register_unauthenticated(websocket)
 
-# Check if user is online (across all servers)
-is_online = await manager.is_user_online(user_id)
+# Authenticate and subscribe to room
+await manager.authenticate_connection(connection_id, user_id, room_id, room_snapshot)
+
+# Disconnect and clean up
+await manager.disconnect(connection_id)
 
 # Send message to specific connection
 await manager.send_to_connection(connection_id, message)
 
-# Send message to all connections of a user (on this server)
-count = await manager.send_to_user(user_id, message)
+# Send message to all connections in a room (on this server)
+count = await manager.send_to_room(room_id, message, exclude_connection=None)
 
-# Broadcast to all connections (on this server)
-count = await manager.broadcast(message)
+# Unsubscribe from room
+await manager.unsubscribe_from_room(connection_id)
 
 # Get connection info
 connection = manager.get_connection(connection_id)
-total = manager.get_total_connection_count()
-user_count = manager.get_user_connection_count(user_id)
 
-# Room messaging (connections auto-subscribed on connect)
-count = await manager.send_to_room(room_id, message, exclude_connection=None)
-await manager.unsubscribe_from_room(connection_id)
+# Update heartbeat
+await manager.heartbeat(connection_id)
 ```
 
 ## Handler Architecture
@@ -461,7 +527,6 @@ The `base.py` module provides helper functions for handlers:
 from app.services.websocket.handlers.base import (
     error_response,
     require_authenticated,
-    validate_request_id,
     validate_payload,
     snapshot_to_pydantic,
 )
@@ -478,11 +543,6 @@ result = error_response(
     error_type=MessageType.ERROR,
     request_id=ctx.message.request_id,
 )
-
-# Validate request_id is present and valid UUID
-error = validate_request_id(ctx.message.request_id, MessageType.ERROR)
-if error:
-    return error
 
 # Validate payload against a schema
 payload, error = validate_payload(
@@ -535,15 +595,18 @@ Example:
 ```python
 # In app/schemas/ws.py
 class MessageType(str, Enum):
+    AUTHENTICATE = "authenticate"
+    AUTHENTICATED = "authenticated"
     PING = "ping"
     PONG = "pong"
-    CONNECTED = "connected"
     ERROR = "error"
     ROOM_UPDATED = "room_updated"
     TOGGLE_READY = "toggle_ready"
     LEAVE_ROOM = "leave_room"
     ROOM_CLOSED = "room_closed"
-    START_GAME = "start_game"  # New type
+    START_GAME = "start_game"
+    # ... game types ...
+    MY_NEW_TYPE = "my_new_type"  # New type
 
 # In app/services/websocket/handlers/start_game.py
 from app.schemas.ws import MessageType, WSServerMessage

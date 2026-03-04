@@ -218,8 +218,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             # Dispatch message to handler
-            # Note: user_id may be None for unauthenticated connections
-            # The authenticate handler will set it, other handlers check for auth
+            # user_id is "" for unauthenticated connections; the authenticate
+            # handler ignores it, all other handlers call require_authenticated()
+            # which rejects before user_id is used.
             ctx = HandlerContext(
                 connection_id=connection.connection_id,
                 user_id=connection.user_id or "",

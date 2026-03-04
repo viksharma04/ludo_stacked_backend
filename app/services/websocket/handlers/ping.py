@@ -15,7 +15,7 @@ async def handle_ping(ctx: HandlerContext) -> HandlerResult:
     """Handle PING message by updating heartbeat and responding with PONG."""
     await ctx.manager.heartbeat(ctx.connection_id)
 
-    logger.debug("Ping/pong for connection %s", ctx.connection_id)
+    # logger.debug("Ping/pong for connection %s", ctx.connection_id)
 
     return HandlerResult(
         success=True,

@@ -69,20 +69,45 @@ app/
 │   ├── auth.py          # Auth request/response models
 │   ├── profile.py       # Profile request/response models
 │   ├── room.py          # Room request/response models
-│   └── ws.py            # WebSocket message models
-└── services/
-    ├── room/
-    │   └── service.py   # Room management service
-    └── websocket/
-        ├── auth.py      # WebSocket JWT validation
-        ├── manager.py   # Connection state manager
-        └── handlers/    # Message handlers (ping, ready, leave)
+│   ├── ws.py            # WebSocket message models
+│   └── game_engine.py   # Game state models
+├── services/
+│   ├── game/
+│   │   ├── start_game.py    # Game initialization
+│   │   └── engine/          # Core game logic
+│   │       ├── actions.py   # Player action models
+│   │       ├── events.py    # Game event models
+│   │       ├── process.py   # Action processing entry point
+│   │       ├── validation.py # Action validation
+│   │       ├── rolling.py   # Dice roll processing
+│   │       ├── movement.py  # Token/stack movement
+│   │       ├── legal_moves.py # Legal move calculation
+│   │       ├── captures.py  # Collision & capture resolution
+│   │       └── stack_utils.py # Stack ID utilities
+│   ├── room/
+│   │   └── service.py   # Room management service
+│   └── websocket/
+│       ├── auth.py      # WebSocket JWT validation
+│       ├── manager.py   # Connection state manager
+│       └── handlers/    # Message handlers
+│           ├── base.py            # Handler registration infrastructure
+│           ├── authenticate.py    # Authentication handler
+│           ├── ping.py            # Ping/pong keepalive
+│           ├── ready.py           # Toggle ready state
+│           ├── leave.py           # Leave room handler
+│           ├── start_game.py      # Start game handler
+│           └── game.py            # Game action handler
+└── utils/
+    └── board_render.py   # Board visualization utilities
 docs/
-├── redis.md             # Redis integration guide
-└── websockets.md        # WebSocket implementation guide
-specs/
-├── room_creation_feature.md      # Backend room creation spec
-└── frontend_room_creation.md     # Frontend room creation spec
+├── redis.md              # Redis integration guide
+├── websockets.md         # WebSocket implementation guide
+├── db_schema.md          # Database schema reference
+├── migrations/           # SQL migration scripts
+│   └── find_or_create_room.sql
+└── plans/                # Design & implementation plans
+tests/                    # Game engine unit tests (18 test files)
+└── conftest.py           # Shared fixtures & helpers
 ```
 
 ## API Endpoints
@@ -140,24 +165,31 @@ specs/
 
 | Endpoint | Description | Auth |
 |----------|-------------|------|
-| `ws://host/api/v1/ws?token=<jwt>&room_code=<code>` | Real-time room connection | JWT + room code |
+| `ws://host/api/v1/ws` | Real-time room connection | Message-based |
 
-**Connection Requirements:**
-- Valid JWT token
-- Valid room code (6 characters)
-- User must have a seat in the room (via `/rooms` or `/rooms/join`)
+**Connection Flow:**
+1. Connect to `ws://host/api/v1/ws` (no query params needed)
+2. Send authentication message: `{"type": "authenticate", "payload": {"token": "<jwt>", "room_code": "ABC123"}}`
+3. Receive `authenticated` response with room snapshot
+4. Client can now send game messages
 
 **Supported Message Types:**
 
 | Type | Direction | Description |
 |------|-----------|-------------|
+| `authenticate` | Client → Server | Authenticate with JWT and room code |
+| `authenticated` | Server → Client | Authentication success with room snapshot |
 | `ping` / `pong` | Client ↔ Server | Keepalive heartbeat |
-| `connected` | Server → Client | Connection acknowledgment with room snapshot |
 | `toggle_ready` | Client → Server | Toggle ready state |
 | `leave_room` | Client → Server | Leave the current room |
 | `room_updated` | Server → Client | Room state changed |
 | `room_closed` | Server → Client | Room closed (host left) |
-| `error` | Server → Client | Error notification |
+| `start_game` | Client → Server | Host starts the game |
+| `game_started` | Server → Client | Game has begun (host only) |
+| `game_action` | Client → Server | Player game action (roll, move, etc.) |
+| `game_events` | Server → Client | Game events broadcast |
+| `game_error` | Server → Client | Game action error |
+| `error` | Server → Client | General error notification |
 
 See [docs/websockets.md](docs/websockets.md) for full protocol details.
 
@@ -206,6 +238,18 @@ curl http://localhost:8000/api/v1/auth/me \
 1. **JWT Signing Keys**: Ensure RS256 keys are active (default for new projects)
 2. **Email Provider**: Configure in Supabase dashboard (for email/password auth)
 3. **OAuth Providers**: Configure in Supabase dashboard (for social logins)
+
+## Game Engine
+
+The game engine (`app/services/game/engine/`) implements Ludo Stacked game mechanics:
+
+- **Token States**: HELL → ROAD → HOMESTRETCH → HEAVEN
+- **Dice Rolling**: Roll 1-6, extra roll on 6, three sixes penalty
+- **Stacking**: Own tokens on same position stack together (on road and homestretch), move as unit with effective roll = roll / stack height
+- **Captures**: Landing on opponent token sends it to HELL, grants bonus roll
+- **Safe Spaces**: Starting positions and marked spaces where tokens cannot be captured
+
+See the CLAUDE.md file for detailed engine architecture and board geometry documentation.
 
 ## Learn More
 

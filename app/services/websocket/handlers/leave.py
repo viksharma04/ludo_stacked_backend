@@ -100,12 +100,10 @@ async def handle_leave_room(ctx: HandlerContext) -> HandlerResult:
             room_id=room_id,
         )
 
-    # Fallback - shouldn't happen but return success
-    return HandlerResult(
-        success=True,
-        response=WSServerMessage(
-            type=MessageType.ROOM_UPDATED,
-            request_id=ctx.message.request_id,
-            payload=None,
-        ),
+    # Shouldn't happen: room_closed=False but no snapshot
+    return error_response(
+        error_code="INTERNAL_ERROR",
+        message="Room snapshot missing after successful leave",
+        error_type=MessageType.ERROR,
+        request_id=ctx.message.request_id,
     )
