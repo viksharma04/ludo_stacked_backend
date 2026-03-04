@@ -23,14 +23,23 @@ from .base import (
 
 logger = logging.getLogger(__name__)
 
-# Standard Ludo colors mapped to seat indices
-SEAT_COLORS = ["red", "blue", "green", "yellow"]
+# Standard Ludo colors mapped to board corners (0=red, 1=blue, 2=green, 3=yellow)
+CORNER_COLORS = ["red", "blue", "green", "yellow"]
+
+# Which board corners are used for each player count
+# Must match the logic in _create_board_setup (start_game.py)
+_CORNERS_BY_PLAYER_COUNT = {
+    2: [0, 2],  # opposite corners
+    3: [0, 1, 2],
+    4: [0, 1, 2, 3],
+}
 
 
 def _build_game_settings_from_room(room_snapshot: RoomSnapshotData) -> GameSettings:
     """Build GameSettings from room snapshot data.
 
-    Maps occupied seats to player attributes with predefined colors.
+    Maps occupied seats to player attributes with colors matching their
+    board corner (starting position), not their seat index.
 
     Args:
         room_snapshot: The room snapshot containing seat data.
@@ -41,20 +50,22 @@ def _build_game_settings_from_room(room_snapshot: RoomSnapshotData) -> GameSetti
     Raises:
         ValueError: If room has fewer than 2 players.
     """
-    player_attributes = []
+    occupied_seats = [seat for seat in room_snapshot.seats if seat.user_id is not None]
 
-    for seat in room_snapshot.seats:
-        if seat.user_id is not None:
-            player_attributes.append(
-                PlayerAttributes(
-                    player_id=UUID(seat.user_id),
-                    name=seat.display_name or f"Player {seat.seat_index + 1}",
-                    color=SEAT_COLORS[seat.seat_index],
-                )
-            )
-
-    if len(player_attributes) < 2:
+    if len(occupied_seats) < 2:
         raise ValueError("At least 2 players are required to start the game")
+
+    corners = _CORNERS_BY_PLAYER_COUNT[len(occupied_seats)]
+
+    player_attributes = []
+    for i, seat in enumerate(occupied_seats):
+        player_attributes.append(
+            PlayerAttributes(
+                player_id=UUID(seat.user_id),
+                name=seat.display_name or f"Player {seat.seat_index + 1}",
+                color=CORNER_COLORS[corners[i]],
+            )
+        )
 
     return GameSettings(
         num_players=len(player_attributes),
