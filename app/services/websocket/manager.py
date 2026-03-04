@@ -150,13 +150,13 @@ class ConnectionManager:
             await self._redis.incr(self._redis_user_conn_count_key(user_id))
         except Exception as e:
             logger.error(
-                "Failed to increment connection count for user %s in Redis: %s", user_id[:8], e
+                "Failed to increment connection count for user %s in Redis: %s", user_id[:8] if user_id else "unknown", e
             )
 
         logger.info(
             "Connection %s authenticated for user %s on server %s, subscribed to room %s",
             connection_id,
-            user_id[:8],
+            user_id[:8] if user_id else "unknown",
             self._server_id,
             room_id,
         )
@@ -244,10 +244,10 @@ class ConnectionManager:
                 await self._redis.delete(self._redis_user_conn_count_key(user_id))
         except Exception as e:
             logger.error(
-                "Failed to decrement connection count for user %s in Redis: %s", user_id[:8], e
+                "Failed to decrement connection count for user %s in Redis: %s", user_id[:8] if user_id else "unknown", e
             )
 
-        logger.info("Connection %s disconnected for user %s", connection_id, user_id[:8])
+        logger.info("Connection %s disconnected for user %s", connection_id, user_id[:8] if user_id else "unknown")
 
     async def heartbeat(self, connection_id: str) -> None:
         """Update the last heartbeat timestamp for a connection.

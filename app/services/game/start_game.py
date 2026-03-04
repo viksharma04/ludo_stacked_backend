@@ -72,10 +72,10 @@ def _create_initial_stacks() -> list[Stack]:
 
 def _initialize_players(game_settings: GameSettings, starting_positions: list[int]) -> list[Player]:
     """Initialize players with deterministic turn order."""
-    shuffled_attributes = list(game_settings.player_attributes)
+    player_attributes = list(game_settings.player_attributes)
 
     players = []
-    for index, player_attr in enumerate(shuffled_attributes):
+    for index, player_attr in enumerate(player_attributes):
         player = Player(
             player_id=player_attr.player_id,
             name=player_attr.name,
