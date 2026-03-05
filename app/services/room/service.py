@@ -326,19 +326,19 @@ class RoomService:
             )
 
             # Initialize Redis state only for newly created rooms
-            if not cached:
-                display_name = await self._get_user_display_name(user_id)
+            # if not cached:
+            display_name = await self._get_user_display_name(user_id)
 
-                await self._initialize_redis_state(
-                    room_id=room_id,
-                    owner_user_id=user_id,
-                    owner_display_name=display_name,
-                    code=code,
-                    visibility=visibility,
-                    max_players=max_players,
-                    ruleset_id=ruleset_id,
-                    ruleset_config=ruleset_config,
-                )
+            await self._initialize_redis_state(
+                room_id=room_id,
+                owner_user_id=user_id,
+                owner_display_name=display_name,
+                code=code,
+                visibility=visibility,
+                max_players=max_players,
+                ruleset_id=ruleset_id,
+                ruleset_config=ruleset_config,
+            )
 
             return CreateRoomResult(
                 success=True,

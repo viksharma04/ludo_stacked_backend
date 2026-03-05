@@ -4,7 +4,7 @@ import pytest
 
 from app.services.room.service import RoomSnapshotData, SeatData
 from app.services.websocket.handlers.start_game import (
-    SEAT_COLORS,
+    CORNER_COLORS,
     _build_game_settings_from_room,
 )
 
@@ -62,7 +62,7 @@ class TestBuildGameSettingsFromRoom:
             str(settings.player_attributes[1].player_id) == "00000000-0000-0000-0000-000000000002"
         )
         assert settings.player_attributes[1].name == "Bob"
-        assert settings.player_attributes[1].color == "blue"
+        assert settings.player_attributes[1].color == "green"  # 2 players use corners [0, 2]
 
     def test_builds_settings_for_four_players(self) -> None:
         """Should create game settings with four players."""
@@ -115,11 +115,11 @@ class TestBuildGameSettingsFromRoom:
         assert settings.num_players == 4
         assert len(settings.player_attributes) == 4
 
-        # Check all colors are assigned correctly by seat index
-        assert settings.player_attributes[0].color == "red"  # seat 0
-        assert settings.player_attributes[1].color == "blue"  # seat 1
-        assert settings.player_attributes[2].color == "green"  # seat 2
-        assert settings.player_attributes[3].color == "yellow"  # seat 3
+        # Check all colors are assigned correctly by board corner
+        assert settings.player_attributes[0].color == "red"  # corner 0
+        assert settings.player_attributes[1].color == "blue"  # corner 1
+        assert settings.player_attributes[2].color == "green"  # corner 2
+        assert settings.player_attributes[3].color == "yellow"  # corner 3
 
     def test_uses_fallback_display_name_when_missing(self) -> None:
         """Should use fallback name when display_name is None."""
@@ -242,18 +242,19 @@ class TestBuildGameSettingsFromRoom:
         settings = _build_game_settings_from_room(room_snapshot)
 
         assert settings.num_players == 2
-        # Colors should match their seat indices
-        assert settings.player_attributes[0].color == "red"  # seat 0
-        assert settings.player_attributes[1].color == "yellow"  # seat 3
+        # Colors should match board corners, not seat indices
+        # 2 players use corners [0, 2] → red, green
+        assert settings.player_attributes[0].color == "red"  # corner 0
+        assert settings.player_attributes[1].color == "green"  # corner 2
 
 
-class TestSeatColors:
-    """Tests for SEAT_COLORS constant."""
+class TestCornerColors:
+    """Tests for CORNER_COLORS constant."""
 
     def test_has_four_colors(self) -> None:
         """Should have exactly 4 standard Ludo colors."""
-        assert len(SEAT_COLORS) == 4
+        assert len(CORNER_COLORS) == 4
 
     def test_standard_ludo_colors(self) -> None:
         """Should have the standard Ludo color set."""
-        assert SEAT_COLORS == ["red", "blue", "green", "yellow"]
+        assert CORNER_COLORS == ["red", "blue", "green", "yellow"]
