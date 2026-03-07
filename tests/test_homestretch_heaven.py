@@ -124,10 +124,10 @@ class TestHomestretchEntry:
         assert moved.to_state == StackState.HOMESTRETCH
 
     def test_stack_stays_road_before_boundary(self, standard_board_setup: BoardSetup):
-        """Stack at ROAD progress=47 rolling 2 -> progress=49 < 50.
+        """Stack at ROAD progress=46 rolling 2 -> progress=48 < 49.
         State should remain ROAD."""
         player1_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 47),
+            create_stack("stack_1", StackState.ROAD, 1, 46),
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -146,7 +146,7 @@ class TestHomestretchEntry:
         assert result.success
         updated_player = next(p for p in result.state.players if p.player_id == PLAYER_1_ID)
         stack = next(s for s in updated_player.stacks if s.stack_id == "stack_1")
-        assert stack.progress == 49
+        assert stack.progress == 48
         assert stack.state == StackState.ROAD
 
     def test_stack_progresses_through_homestretch(self, standard_board_setup: BoardSetup):

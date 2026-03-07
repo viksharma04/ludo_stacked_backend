@@ -134,11 +134,6 @@ Tests live in `tests/` and cover the game engine and WebSocket handlers. Run wit
 - All tests currently pass. When new game rules are added, failing tests may be used as the implementation backlog. See `docs/plans/2026-02-28-core-engine-test-suite-design.md` for design details.
 - **Board fixtures use grid_length=6**: `squares_to_win=55`, `squares_to_homestretch=50`, `safe_spaces=[0,7,13,20,26,33,39,46]`
 
-### Known Implementation Gaps
-
-- `_create_board_setup()`: `squares_to_homestretch` uses `8g+1` instead of `8g+2`; 2-player uses consecutive starts instead of opposite corners
-- HELL exit doesn't trigger collision detection (no merge with own stack at starting position)
-
 ### Adding New Features
 
 When implementing major features:

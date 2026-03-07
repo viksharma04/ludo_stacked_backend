@@ -97,9 +97,9 @@ class TestSingleOpponentAutoResolved:
     def test_single_opponent_captured_automatically(self, standard_board_setup: BoardSetup):
         """Player 1 moves to abs position 5 where only Player 2 sits.
 
-        Setup (grid_length=6, squares_to_homestretch=50):
+        Setup (grid_length=6, squares_to_homestretch=49):
         - Player 1 (abs_start=0): stack_1 at ROAD progress=2, will move +3 -> progress=5 (abs=5)
-        - Player 2 (abs_start=13): stack_1 at progress=42 -> abs=(13+42)%50=5
+        - Player 2 (abs_start=13): stack_1 at progress=42 -> abs=(13+42)%52=5
         - Position 5 is NOT a safe space -> capture happens.
 
         Expected: StackCaptured emitted, NO AwaitingCaptureChoice.
@@ -111,7 +111,7 @@ class TestSingleOpponentAutoResolved:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 42),  # abs = (13+42)%50 = 5
+            create_stack("stack_1", StackState.ROAD, 1, 44),  # abs = (13+42)%50 = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -162,10 +162,10 @@ class TestMultipleOpponentsRequireChoice:
     ):
         """Player 1 moves to abs=5 where Player 2 AND Player 3 both sit.
 
-        Setup (squares_to_homestretch=50):
+        Setup (squares_to_homestretch=49):
         - Player 1 (abs_start=0):  stack_1 at ROAD progress=2, move +3 -> progress=5 (abs=5)
-        - Player 2 (abs_start=13): stack_1 at progress=42 -> abs=(13+42)%50=5
-        - Player 3 (abs_start=26): stack_1 at progress=29 -> abs=(26+29)%50=5
+        - Player 2 (abs_start=13): stack_1 at progress=42 -> abs=(13+42)%52=5
+        - Player 3 (abs_start=26): stack_1 at progress=29 -> abs=(26+29)%52=5
 
         Expected:
         - Engine detects 2 opponent collisions at abs=5.
@@ -182,13 +182,13 @@ class TestMultipleOpponentsRequireChoice:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 42),  # abs = 5
+            create_stack("stack_1", StackState.ROAD, 1, 44),  # abs = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p3_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 29),  # abs = (26+29)%50 = 5
+            create_stack("stack_1", StackState.ROAD, 1, 31),  # abs = (26+29)%50 = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -258,13 +258,13 @@ class TestCaptureChoiceResolution:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 42),  # abs = 5
+            create_stack("stack_1", StackState.ROAD, 1, 44),  # abs = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p3_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 29),  # abs = 5
+            create_stack("stack_1", StackState.ROAD, 1, 31),  # abs = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -321,7 +321,7 @@ class TestCaptureChoiceResolution:
         p3 = next(p for p in new_state.players if p.player_id == PLAYER_3_ID)
         p3_stack = next(s for s in p3.stacks if s.stack_id == "stack_1")
         assert p3_stack.state == StackState.ROAD
-        assert p3_stack.progress == 29
+        assert p3_stack.progress == 31
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +345,7 @@ class TestCaptureChoiceValidation:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 42),  # abs = 5
+            create_stack("stack_1", StackState.ROAD, 1, 44),  # abs = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -434,13 +434,13 @@ class TestCaptureChoiceHeightFilter:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 42),  # abs = 5, height=1
+            create_stack("stack_1", StackState.ROAD, 1, 44),  # abs = 5, height=1
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p3_stacks = [
-            create_stack("stack_1_2", StackState.ROAD, 2, 29),  # abs = 5, height=2
+            create_stack("stack_1_2", StackState.ROAD, 2, 31),  # abs = (26+31)%52 = 5, height=2
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
@@ -475,7 +475,7 @@ class TestCaptureChoiceHeightFilter:
         p3 = next(p for p in new_state.players if p.player_id == PLAYER_3_ID)
         p3_stack = next(s for s in p3.stacks if s.stack_id == "stack_1_2")
         assert p3_stack.state == StackState.ROAD
-        assert p3_stack.progress == 29
+        assert p3_stack.progress == 31
 
 
 # ---------------------------------------------------------------------------
@@ -506,13 +506,13 @@ class TestCaptureChoiceGrantsExtraRolls:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 42),  # abs = 5
+            create_stack("stack_1", StackState.ROAD, 1, 44),  # abs = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p3_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 29),  # abs = 5
+            create_stack("stack_1", StackState.ROAD, 1, 31),  # abs = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -578,12 +578,12 @@ class TestCaptureChoiceGrantsExtraRolls:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1_2", StackState.ROAD, 2, 42),  # abs = 5, height=2
+            create_stack("stack_1_2", StackState.ROAD, 2, 44),  # abs = (13+44)%52 = 5, height=2
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p3_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 29),  # abs = 5, height=1
+            create_stack("stack_1", StackState.ROAD, 1, 31),  # abs = 5, height=1
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -647,11 +647,11 @@ class TestDetectMultipleCollisions:
     def test_detect_collisions_finds_multiple_opponents(self, standard_board_setup: BoardSetup):
         """Three players have stacks at the same absolute position.
 
-        Setup (squares_to_homestretch=50):
+        Setup (squares_to_homestretch=49):
         - Player 1 (abs_start=0):  stack_1 at progress=5  -> abs=5
-        - Player 2 (abs_start=13): stack_1 at progress=42 -> abs=(13+42)%50=5
-        - Player 3 (abs_start=26): stack_1 at progress=29 -> abs=(26+29)%50=5
-        - Player 4 (abs_start=39): stack_1 at progress=16 -> abs=(39+16)%50=5
+        - Player 2 (abs_start=13): stack_1 at progress=42 -> abs=(13+42)%52=5
+        - Player 3 (abs_start=26): stack_1 at progress=29 -> abs=(26+29)%52=5
+        - Player 4 (abs_start=39): stack_1 at progress=16 -> abs=(39+16)%52=5
 
         detect_collisions for Player 1's stack should find 3 collisions
         (Player 2, Player 3, Player 4).
@@ -663,19 +663,19 @@ class TestDetectMultipleCollisions:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 42),  # abs = 5
+            create_stack("stack_1", StackState.ROAD, 1, 44),  # abs = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p3_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 29),  # abs = 5
+            create_stack("stack_1", StackState.ROAD, 1, 31),  # abs = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p4_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 16),  # abs = (39+16)%50 = 5
+            create_stack("stack_1", StackState.ROAD, 1, 18),  # abs = (39+16)%50 = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -721,13 +721,13 @@ class TestDetectMultipleCollisions:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 42),  # abs = 5
+            create_stack("stack_1", StackState.ROAD, 1, 44),  # abs = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p3_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 29),  # abs = 5
+            create_stack("stack_1", StackState.ROAD, 1, 31),  # abs = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -769,7 +769,7 @@ class TestDetectMultipleCollisions:
         ]
         # Player 3 at abs=5 on ROAD (should collide)
         p3_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 29),  # abs = 5
+            create_stack("stack_1", StackState.ROAD, 1, 31),  # abs = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),

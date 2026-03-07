@@ -665,7 +665,7 @@ class TestBonusRollOrdering:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 32),
+            create_stack("stack_1", StackState.ROAD, 1, 34),
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -707,7 +707,7 @@ class TestBonusRollOrdering:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 32),
+            create_stack("stack_1", StackState.ROAD, 1, 34),
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),

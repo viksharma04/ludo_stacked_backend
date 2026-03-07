@@ -43,6 +43,7 @@ class GameSettings(BaseModel):
 
 # Defined at game start
 class BoardSetup(BaseModel):
+    loop_length: int = Field(..., description="Total number of squares in one loop around the board")
     squares_to_win: int
     squares_to_homestretch: int
     starting_positions: list[int]

@@ -28,15 +28,17 @@ def standard_board_setup() -> BoardSetup:
 
     Formulas (g=grid_length):
     - step = 2g+1 = 13
+    - loop_length = 8g+4 = 52
     - starting_positions = [0, 13, 26, 39]
-    - squares_to_homestretch = 8g+2 = 50
+    - squares_to_homestretch = 8g+1 = 49
     - squares_to_win = 9g+1 = 55
     - safe_offset = 2g-5 = 7 from each starting position
     - Board is always complete (all 4 starting positions, all 8 safe spaces)
     """
     return BoardSetup(
+        loop_length=52,
         squares_to_win=55,
-        squares_to_homestretch=50,
+        squares_to_homestretch=49,
         starting_positions=[0, 13, 26, 39],
         safe_spaces=[0, 7, 13, 20, 26, 33, 39, 46],
         get_out_rolls=[6],
@@ -51,8 +53,9 @@ def two_player_board_setup() -> BoardSetup:
     Players placed on opposite corners (1st and 3rd starting positions).
     """
     return BoardSetup(
+        loop_length=52,
         squares_to_win=55,
-        squares_to_homestretch=50,
+        squares_to_homestretch=49,
         starting_positions=[0, 26],
         safe_spaces=[0, 7, 13, 20, 26, 33, 39, 46],
         get_out_rolls=[6],

@@ -54,8 +54,9 @@ def _create_board_setup(game_settings: GameSettings) -> BoardSetup:
         starting_positions = starting_positions[:num_players]
 
     return BoardSetup(
+        loop_length=(8 * grid_length) + 4,
         squares_to_win=(9 * grid_length) + 1,
-        squares_to_homestretch=8 * grid_length + 2,
+        squares_to_homestretch=8 * grid_length + 1,
         starting_positions=starting_positions,
         get_out_rolls=game_settings.get_out_rolls,
         safe_spaces=safe_spaces,

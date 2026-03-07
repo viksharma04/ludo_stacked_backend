@@ -74,6 +74,7 @@ class TestBasicCapture:
 
         # Verify safe spaces don't include position 8
         board_setup = BoardSetup(
+            loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
             starting_positions=[0, 26],
@@ -155,6 +156,7 @@ class TestBasicCapture:
         )
 
         board_setup = BoardSetup(
+            loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
             starting_positions=[0, 26],
@@ -231,6 +233,7 @@ class TestSafeSpaces:
 
         # Safe space at 0
         board_setup = BoardSetup(
+            loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
             starting_positions=[0, 26],
@@ -319,6 +322,7 @@ class TestStackCaptures:
         )
 
         board_setup = BoardSetup(
+            loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
             starting_positions=[0, 26],
@@ -404,6 +408,7 @@ class TestStackCaptures:
         )
 
         board_setup = BoardSetup(
+            loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
             starting_positions=[0, 26],
@@ -468,9 +473,9 @@ class TestMultiHeightCaptureDecomposition:
             stacks=player1_stacks,
         )
 
-        # Player 2 has height-2 stack at abs pos 5: (26 + progress) % 50 = 5 => progress = 29
+        # Player 2 has height-2 stack at abs pos 5: (26 + progress) % 52 = 5 => progress = 31
         player2_stacks = [
-            create_stack("stack_1_2", StackState.ROAD, 2, 29),
+            create_stack("stack_1_2", StackState.ROAD, 2, 31),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
@@ -484,8 +489,9 @@ class TestMultiHeightCaptureDecomposition:
         )
 
         board_setup = BoardSetup(
+            loop_length=52,
             squares_to_win=55,
-            squares_to_homestretch=50,
+            squares_to_homestretch=49,
             starting_positions=[0, 26],
             safe_spaces=[0, 26],
             get_out_rolls=[6],
@@ -563,9 +569,9 @@ class TestMultiHeightCaptureDecomposition:
             stacks=player1_stacks,
         )
 
-        # Player 2 at abs position 8: (26 + progress) % 50 = 8 => progress = 32
+        # Player 2 at abs position 8: (26 + progress) % 52 = 8 => progress = 34
         player2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 32),
+            create_stack("stack_1", StackState.ROAD, 1, 34),
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -580,8 +586,9 @@ class TestMultiHeightCaptureDecomposition:
         )
 
         board_setup = BoardSetup(
+            loop_length=52,
             squares_to_win=55,
-            squares_to_homestretch=50,
+            squares_to_homestretch=49,
             starting_positions=[0, 26],
             safe_spaces=[0, 26],
             get_out_rolls=[6],
