@@ -624,10 +624,14 @@ class TestSkipRollNoLegalMoves:
         assert result.success and result.state is not None
 
         # Remaining roll [1]: no moves (stack_1 in HEAVEN, rest in HELL)
-        # Roll 1 silently discarded, turn ends
-        turn_ended = [e for e in result.events if isinstance(e, TurnEnded)]
-        assert len(turn_ended) == 1
-        assert turn_ended[0].reason == "all_rolls_used" or turn_ended[0].reason == "no_legal_moves"
+        # Roll 1 silently discarded, but reaching heaven grants 1 extra roll
+        # Player stays in PLAYER_ROLL state for their bonus roll
+        assert result.state.current_event == CurrentEvent.PLAYER_ROLL
+        assert result.state.current_turn.player_id == PLAYER_1_ID
+
+        roll_granted = [e for e in result.events if isinstance(e, RollGranted)]
+        heaven_grants = [e for e in roll_granted if e.reason == "reached_heaven"]
+        assert len(heaven_grants) == 1
 
 
 # ---------------------------------------------------------------------------

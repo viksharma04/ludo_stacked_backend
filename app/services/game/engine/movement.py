@@ -275,6 +275,14 @@ def apply_stack_move(
     ]
     updated_state = state.model_copy(update={"players": updated_players})
 
+    # Grant extra rolls for reaching heaven (1 per piece in the stack)
+    if new_state == StackState.HEAVEN and updated_state.current_turn is not None:
+        new_total = updated_state.current_turn.heaven_extra_rolls + stack.height
+        updated_turn = updated_state.current_turn.model_copy(
+            update={"heaven_extra_rolls": new_total}
+        )
+        updated_state = updated_state.model_copy(update={"current_turn": updated_turn})
+
     # Handle collisions on ROAD
     if new_state == StackState.ROAD:
         logger.debug("Checking for collisions at progress=%d", new_progress)
@@ -434,6 +442,14 @@ def apply_split_move(
     ]
     updated_state = state.model_copy(update={"players": updated_players})
 
+    # Grant extra rolls for reaching heaven (1 per piece in the stack)
+    if moving_state == StackState.HEAVEN and updated_state.current_turn is not None:
+        new_total = updated_state.current_turn.heaven_extra_rolls + moving_height
+        updated_turn = updated_state.current_turn.model_copy(
+            update={"heaven_extra_rolls": new_total}
+        )
+        updated_state = updated_state.model_copy(update={"current_turn": updated_turn})
+
     # Handle collisions for moving stack on ROAD
     if moving_state == StackState.ROAD:
         # Get the fresh player from updated state
@@ -571,6 +587,29 @@ def process_after_move(
         )
         return ProcessResult.ok(new_state, events)
 
+    # Check for extra rolls from reaching heaven
+    if current_turn.heaven_extra_rolls > 0:
+        logger.info(
+            "Granting heaven bonus roll: player=%s, heaven_extra_rolls_remaining=%d",
+            str(original_turn.player_id)[:8],
+            current_turn.heaven_extra_rolls,
+        )
+        events.append(RollGranted(player_id=original_turn.player_id, reason="reached_heaven"))
+        updated_turn = current_turn.model_copy(
+            update={
+                "rolls_to_allocate": remaining_rolls,
+                "heaven_extra_rolls": current_turn.heaven_extra_rolls - 1,
+                "legal_moves": [],
+            }
+        )
+        new_state = state.model_copy(
+            update={
+                "current_event": CurrentEvent.PLAYER_ROLL,
+                "current_turn": updated_turn,
+            }
+        )
+        return ProcessResult.ok(new_state, events)
+
     # End turn - move to next player
     logger.info(
         "Turn ending: player=%s, reason=all_rolls_used",
@@ -658,6 +697,24 @@ def resume_after_capture(
             update={
                 "rolls_to_allocate": [],
                 "extra_rolls": current_turn.extra_rolls - 1,
+                "legal_moves": [],
+            }
+        )
+        new_state = state.model_copy(
+            update={
+                "current_event": CurrentEvent.PLAYER_ROLL,
+                "current_turn": updated_turn,
+            }
+        )
+        return ProcessResult.ok(new_state, events)
+
+    # Check for extra rolls from reaching heaven
+    if current_turn.heaven_extra_rolls > 0:
+        events.append(RollGranted(player_id=current_turn.player_id, reason="reached_heaven"))
+        updated_turn = current_turn.model_copy(
+            update={
+                "rolls_to_allocate": [],
+                "heaven_extra_rolls": current_turn.heaven_extra_rolls - 1,
                 "legal_moves": [],
             }
         )
