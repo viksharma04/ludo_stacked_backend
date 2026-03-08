@@ -101,6 +101,7 @@ class TestAbsolutePosition:
     def test_absolute_position_wrapping(self):
         """Progress equal to loop_length should wrap to position 0."""
         board = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=55,
             squares_to_homestretch=49,
@@ -125,6 +126,7 @@ class TestAbsolutePosition:
     def test_different_players_same_absolute_position(self):
         """Two players at different progress values can occupy the same absolute position."""
         board = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=55,
             squares_to_homestretch=49,
@@ -159,6 +161,7 @@ class TestAbsolutePosition:
     def test_absolute_position_player2(self):
         """Player 2 (abs_start=13) at progress=5 should be at absolute position 18."""
         board = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=55,
             squares_to_homestretch=49,
@@ -196,6 +199,7 @@ class TestSafeSpaces:
     def test_homestretch_boundary(self):
         """Progress < squares_to_homestretch stays on ROAD; >= enters HOMESTRETCH."""
         board = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=55,
             squares_to_homestretch=49,

@@ -104,6 +104,7 @@ class TestGetOutOfHell:
         """Test that custom get_out_rolls configuration works (e.g., 1 and 6)."""
         # Custom board where 1 and 6 are get-out rolls
         board_setup = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,

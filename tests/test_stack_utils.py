@@ -164,6 +164,7 @@ PLAYER_2_ID = UUID("00000000-0000-0000-0000-000000000002")
 def _make_game_state(players: list[Player]) -> GameState:
     """Helper to create a minimal GameState for integration tests."""
     board_setup = BoardSetup(
+        grid_length=6,
         loop_length=52,
         squares_to_win=57,
         squares_to_homestretch=52,
@@ -287,6 +288,7 @@ class TestLegalMovesSubStackIds:
             stacks=[Stack(stack_id="stack_1_2_3", state=StackState.ROAD, height=3, progress=10)],
         )
         board = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
@@ -312,6 +314,7 @@ class TestLegalMovesSubStackIds:
             stacks=[Stack(stack_id="stack_4", state=StackState.HELL, height=1, progress=0)],
         )
         board = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
@@ -339,6 +342,7 @@ class TestGetLegalMoveGroups:
             ],
         )
         board = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
@@ -432,6 +436,7 @@ def _make_movement_game_state(
     Sets the turn to player 1 with the given rolls_to_allocate.
     """
     board_setup = BoardSetup(
+        grid_length=6,
         loop_length=52,
         squares_to_win=57,
         squares_to_homestretch=52,
@@ -698,6 +703,7 @@ class TestCheckWinCondition:
             players=[player],
             current_event=CurrentEvent.PLAYER_ROLL,
             board_setup=BoardSetup(
+                grid_length=6,
                 loop_length=52,
                 squares_to_win=57,
                 squares_to_homestretch=52,
@@ -729,6 +735,7 @@ class TestCheckWinCondition:
             players=[player],
             current_event=CurrentEvent.PLAYER_ROLL,
             board_setup=BoardSetup(
+                grid_length=6,
                 loop_length=52,
                 squares_to_win=57,
                 squares_to_homestretch=52,
@@ -758,6 +765,7 @@ class TestCheckWinCondition:
             players=[player],
             current_event=CurrentEvent.PLAYER_ROLL,
             board_setup=BoardSetup(
+                grid_length=6,
                 loop_length=52,
                 squares_to_win=57,
                 squares_to_homestretch=52,

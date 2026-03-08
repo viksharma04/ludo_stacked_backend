@@ -36,6 +36,7 @@ def standard_board_setup() -> BoardSetup:
     - Board is always complete (all 4 starting positions, all 8 safe spaces)
     """
     return BoardSetup(
+        grid_length=6,
         loop_length=52,
         squares_to_win=55,
         squares_to_homestretch=49,
@@ -53,6 +54,7 @@ def two_player_board_setup() -> BoardSetup:
     Players placed on opposite corners (1st and 3rd starting positions).
     """
     return BoardSetup(
+        grid_length=6,
         loop_length=52,
         squares_to_win=55,
         squares_to_homestretch=49,
