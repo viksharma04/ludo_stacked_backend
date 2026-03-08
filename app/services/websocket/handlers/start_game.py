@@ -5,6 +5,7 @@ from uuid import UUID
 
 from app.schemas.game_engine import GameSettings, PlayerAttributes
 from app.schemas.ws import (
+    GameSettingsPayload,
     GameStartedPayload,
     MessageType,
     WSServerMessage,
@@ -35,14 +36,18 @@ _CORNERS_BY_PLAYER_COUNT = {
 }
 
 
-def _build_game_settings_from_room(room_snapshot: RoomSnapshotData) -> GameSettings:
-    """Build GameSettings from room snapshot data.
+def _build_game_settings_from_room(
+    room_snapshot: RoomSnapshotData,
+    settings_payload: GameSettingsPayload,
+) -> GameSettings:
+    """Build GameSettings from room snapshot data and client-provided settings.
 
     Maps occupied seats to player attributes with colors matching their
     board corner (starting position), not their seat index.
 
     Args:
         room_snapshot: The room snapshot containing seat data.
+        settings_payload: Game settings from the client (with defaults).
 
     Returns:
         GameSettings ready for initialize_game().
@@ -70,8 +75,8 @@ def _build_game_settings_from_room(room_snapshot: RoomSnapshotData) -> GameSetti
     return GameSettings(
         num_players=len(player_attributes),
         player_attributes=player_attributes,
-        grid_length=6,
-        get_out_rolls=[6],
+        grid_length=settings_payload.grid_length,
+        get_out_rolls=settings_payload.get_out_rolls,
     )
 
 
@@ -181,9 +186,22 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
             request_id=ctx.message.request_id,
         )
 
+    # Parse game settings from payload (defaults used if absent)
+    payload = ctx.message.payload or {}
+    settings_data = payload.get("game_settings", {})
+    try:
+        settings_payload = GameSettingsPayload(**settings_data)
+    except (TypeError, ValueError) as e:
+        return error_response(
+            error_code="INVALID_SETTINGS",
+            message=f"Invalid game settings: {e}",
+            error_type=MessageType.GAME_ERROR,
+            request_id=ctx.message.request_id,
+        )
+
     # Build game settings from room seats
     try:
-        game_settings = _build_game_settings_from_room(room_snapshot)
+        game_settings = _build_game_settings_from_room(room_snapshot, settings_payload)
     except ValueError as e:
         return error_response(
             error_code="GAME_INIT_FAILED",

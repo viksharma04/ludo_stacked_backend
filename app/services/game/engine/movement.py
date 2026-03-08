@@ -246,7 +246,7 @@ def apply_stack_move(
                 str(player.player_id)[:8],
             )
             events.append(StackReachedHeaven(player_id=player.player_id, stack_id=stack_id))
-        elif new_progress >= board_setup.squares_to_homestretch:
+        elif new_progress > board_setup.squares_to_homestretch:
             new_state = StackState.HOMESTRETCH
             logger.debug(
                 "Stack entered homestretch: stack=%s, progress=%d",
@@ -372,7 +372,7 @@ def apply_split_move(
     moving_state = parent.state
     if new_progress == board_setup.squares_to_win:
         moving_state = StackState.HEAVEN
-    elif new_progress >= board_setup.squares_to_homestretch:
+    elif new_progress > board_setup.squares_to_homestretch:
         moving_state = StackState.HOMESTRETCH
 
     # Create the remaining stack (same position/state as parent)

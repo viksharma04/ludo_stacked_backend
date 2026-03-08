@@ -2,11 +2,14 @@
 
 import pytest
 
+from app.schemas.ws import GameSettingsPayload
 from app.services.room.service import RoomSnapshotData, SeatData
 from app.services.websocket.handlers.start_game import (
     CORNER_COLORS,
     _build_game_settings_from_room,
 )
+
+DEFAULT_SETTINGS = GameSettingsPayload()
 
 
 class TestBuildGameSettingsFromRoom:
@@ -44,7 +47,7 @@ class TestBuildGameSettingsFromRoom:
             version=1,
         )
 
-        settings = _build_game_settings_from_room(room_snapshot)
+        settings = _build_game_settings_from_room(room_snapshot, DEFAULT_SETTINGS)
 
         assert settings.num_players == 2
         assert len(settings.player_attributes) == 2
@@ -110,7 +113,7 @@ class TestBuildGameSettingsFromRoom:
             version=1,
         )
 
-        settings = _build_game_settings_from_room(room_snapshot)
+        settings = _build_game_settings_from_room(room_snapshot, DEFAULT_SETTINGS)
 
         assert settings.num_players == 4
         assert len(settings.player_attributes) == 4
@@ -153,7 +156,7 @@ class TestBuildGameSettingsFromRoom:
             version=1,
         )
 
-        settings = _build_game_settings_from_room(room_snapshot)
+        settings = _build_game_settings_from_room(room_snapshot, DEFAULT_SETTINGS)
 
         assert settings.player_attributes[0].name == "Player 1"  # Fallback
         assert settings.player_attributes[1].name == "Bob"
@@ -184,7 +187,7 @@ class TestBuildGameSettingsFromRoom:
         )
 
         with pytest.raises(ValueError, match="At least 2 players are required"):
-            _build_game_settings_from_room(room_snapshot)
+            _build_game_settings_from_room(room_snapshot, DEFAULT_SETTINGS)
 
     def test_raises_error_with_no_players(self) -> None:
         """Should raise ValueError with no players."""
@@ -205,7 +208,7 @@ class TestBuildGameSettingsFromRoom:
         )
 
         with pytest.raises(ValueError, match="At least 2 players are required"):
-            _build_game_settings_from_room(room_snapshot)
+            _build_game_settings_from_room(room_snapshot, DEFAULT_SETTINGS)
 
     def test_players_in_non_consecutive_seats(self) -> None:
         """Should handle players in non-consecutive seats correctly."""
@@ -239,7 +242,7 @@ class TestBuildGameSettingsFromRoom:
             version=1,
         )
 
-        settings = _build_game_settings_from_room(room_snapshot)
+        settings = _build_game_settings_from_room(room_snapshot, DEFAULT_SETTINGS)
 
         assert settings.num_players == 2
         # Colors should match board corners, not seat indices

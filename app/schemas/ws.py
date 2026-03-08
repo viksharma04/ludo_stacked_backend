@@ -121,6 +121,17 @@ class AuthenticatedPayload(BaseModel):
 # --- Game payload schemas ---
 
 
+class GameSettingsPayload(BaseModel):
+    """Optional game settings sent by the host in the start_game payload.
+
+    All fields have defaults so existing clients work without changes.
+    New settings should be added here with sensible defaults.
+    """
+
+    grid_length: int = Field(default=6, ge=3)
+    get_out_rolls: list[int] = Field(default_factory=lambda: [6])
+
+
 class GameActionPayload(BaseModel):
     """Payload for GAME_ACTION messages from client.
 
