@@ -375,10 +375,10 @@ class TestCaptureInTurnFlow:
         ]
         player1 = create_player(PLAYER_1_ID, "Player 1", "red", 1, 0, stacks=p1_stacks)
 
-        # Player 2: stack_1 at ROAD progress=29 (abs = (26+29) % 50 = 5)
+        # Player 2: stack_1 at ROAD progress=31 (abs = (26+31) % 52 = 5)
         # Position 5 is NOT a safe space (safe_spaces=[0, 7, 13, 20, 26, 33, 39, 46])
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 29),
+            create_stack("stack_1", StackState.ROAD, 1, 31),
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),

@@ -118,11 +118,12 @@ class RollGranted(GameEvent):
     - At the start of their turn
     - After rolling a 6 (extra roll)
     - After capturing opponent stacks (bonus roll)
+    - After reaching heaven (bonus roll per piece in stack)
     """
 
     event_type: Literal["roll_granted"] = "roll_granted"
     player_id: UUID
-    reason: Literal["turn_start", "rolled_six", "capture_bonus"]
+    reason: Literal["turn_start", "rolled_six", "capture_bonus", "reached_heaven"]
 
 
 class TurnEnded(GameEvent):

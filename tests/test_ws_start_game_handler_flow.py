@@ -21,6 +21,7 @@ def _make_context(
     authenticated: bool = True,
     room_id: str | None = ROOM_ID,
     connection_exists: bool = True,
+    payload: dict | None = None,
 ) -> HandlerContext:
     """Build a HandlerContext with a mocked manager."""
     manager = MagicMock()
@@ -37,6 +38,7 @@ def _make_context(
     message = WSClientMessage(
         type=MessageType.START_GAME,
         request_id="00000000-0000-0000-0000-aaaaaaaaaaaa",
+        payload=payload,
     )
     return HandlerContext(
         connection_id=CONN_ID,
@@ -256,3 +258,135 @@ class TestHandleStartGameSuccess:
 
         mock_save_game_state.assert_called_once()
         mock_service.update_room_status_to_in_game.assert_called_once_with(ROOM_ID)
+
+
+class TestHandleStartGameSettings:
+    """Test game settings passed via start_game payload."""
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.save_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_default_settings_when_no_payload(
+        self,
+        mock_get_room_service: MagicMock,
+        mock_get_game_state: AsyncMock,
+        mock_save_game_state: AsyncMock,
+    ) -> None:
+        """When no payload is sent, defaults are used (grid_length=6, get_out_rolls=[6])."""
+        snapshot = _ready_room_snapshot()
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_service.update_room_status_to_in_game = AsyncMock()
+        mock_get_room_service.return_value = mock_service
+        mock_get_game_state.return_value = None
+
+        ctx = _make_context()  # no payload
+        result = await handle_start_game(ctx)
+
+        assert result.success
+        game_state = result.response.payload["game_state"]
+        assert game_state["board_setup"]["get_out_rolls"] == [6]
+        # grid_length=6 → squares_to_win = 9*6+1 = 55
+        assert game_state["board_setup"]["squares_to_win"] == 55
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.save_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_custom_grid_length(
+        self,
+        mock_get_room_service: MagicMock,
+        mock_get_game_state: AsyncMock,
+        mock_save_game_state: AsyncMock,
+    ) -> None:
+        """Frontend can override grid_length via payload."""
+        snapshot = _ready_room_snapshot()
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_service.update_room_status_to_in_game = AsyncMock()
+        mock_get_room_service.return_value = mock_service
+        mock_get_game_state.return_value = None
+
+        ctx = _make_context(payload={"game_settings": {"grid_length": 8}})
+        result = await handle_start_game(ctx)
+
+        assert result.success
+        game_state = result.response.payload["game_state"]
+        # grid_length=8 → squares_to_win = 9*8+1 = 73
+        assert game_state["board_setup"]["squares_to_win"] == 73
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.save_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_custom_get_out_rolls(
+        self,
+        mock_get_room_service: MagicMock,
+        mock_get_game_state: AsyncMock,
+        mock_save_game_state: AsyncMock,
+    ) -> None:
+        """Frontend can override get_out_rolls via payload."""
+        snapshot = _ready_room_snapshot()
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_service.update_room_status_to_in_game = AsyncMock()
+        mock_get_room_service.return_value = mock_service
+        mock_get_game_state.return_value = None
+
+        ctx = _make_context(payload={"game_settings": {"get_out_rolls": [1, 6]}})
+        result = await handle_start_game(ctx)
+
+        assert result.success
+        game_state = result.response.payload["game_state"]
+        assert game_state["board_setup"]["get_out_rolls"] == [1, 6]
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.save_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_invalid_grid_length_rejected(
+        self,
+        mock_get_room_service: MagicMock,
+        mock_get_game_state: AsyncMock,
+        mock_save_game_state: AsyncMock,
+    ) -> None:
+        """grid_length < 3 should be rejected."""
+        snapshot = _ready_room_snapshot()
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_service.update_room_status_to_in_game = AsyncMock()
+        mock_get_room_service.return_value = mock_service
+        mock_get_game_state.return_value = None
+
+        ctx = _make_context(payload={"game_settings": {"grid_length": 2}})
+        result = await handle_start_game(ctx)
+
+        assert not result.success
+        assert result.response.payload["error_code"] == "INVALID_SETTINGS"
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.save_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    async def test_empty_payload_uses_defaults(
+        self,
+        mock_get_room_service: MagicMock,
+        mock_get_game_state: AsyncMock,
+        mock_save_game_state: AsyncMock,
+    ) -> None:
+        """An empty payload (no game_settings key) uses defaults."""
+        snapshot = _ready_room_snapshot()
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_service.update_room_status_to_in_game = AsyncMock()
+        mock_get_room_service.return_value = mock_service
+        mock_get_game_state.return_value = None
+
+        ctx = _make_context(payload={})
+        result = await handle_start_game(ctx)
+
+        assert result.success
+        game_state = result.response.payload["game_state"]
+        assert game_state["board_setup"]["squares_to_win"] == 55
+        assert game_state["board_setup"]["get_out_rolls"] == [6]

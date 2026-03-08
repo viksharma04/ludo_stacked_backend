@@ -72,8 +72,8 @@ class TestCaptureGrantsExtraRolls:
         """Capturing a height-1 stack should grant 1 extra roll.
 
         Player 1 (abs_start=0) has stack_1 at ROAD progress=3.
-        Player 2 (abs_start=26) has stack_1 at ROAD progress=29.
-        Player 2 abs position: (26 + 29) % 50 = 5.
+        Player 2 (abs_start=26) has stack_1 at ROAD progress=31.
+        Player 2 abs position: (26 + 29) % 52 = 5.
         Player 1 moves stack_1 with roll=2: progress 3 + 2 = 5, abs position = 5.
         Position 5 is not a safe space, so capture occurs.
         Captured stack height = 1, so extra_rolls should be 1.
@@ -85,7 +85,7 @@ class TestCaptureGrantsExtraRolls:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 29),
+            create_stack("stack_1", StackState.ROAD, 1, 31),
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -127,8 +127,8 @@ class TestCaptureGrantsExtraRolls:
         """Capturing a height-2 stack should grant 2 extra rolls.
 
         Player 1 (abs_start=0) has stack_1 at ROAD progress=3.
-        Player 2 (abs_start=26) has stack_1_2 (height=2) at ROAD progress=29.
-        Player 2 abs position: (26 + 29) % 50 = 5.
+        Player 2 (abs_start=26) has stack_1_2 (height=2) at ROAD progress=31.
+        Player 2 abs position: (26 + 29) % 52 = 5.
         Player 1 moves stack_1 with roll=2: progress 3 + 2 = 5, abs position = 5.
         Position 5 is not safe. Capturing stack height=1, captured stack height=2.
         But wait: height 1 cannot capture height 2 (capturing_size < captured_size).
@@ -144,7 +144,7 @@ class TestCaptureGrantsExtraRolls:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1_2", StackState.ROAD, 2, 29),
+            create_stack("stack_1_2", StackState.ROAD, 2, 31),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
@@ -293,7 +293,7 @@ class TestExtraRollBehavior:
 
         Integration test via process_action:
         Player 1 (abs_start=0) has stack_1 at ROAD progress=3.
-        Player 2 (abs_start=26) has stack_1 at ROAD progress=29 (abs=5).
+        Player 2 (abs_start=26) has stack_1 at ROAD progress=31 (abs=5).
         Roll=2, stack_1 moves to progress=5 (abs=5). Capture occurs.
         Only one allocated roll, so after move, extra roll kicks in.
         """
@@ -304,7 +304,7 @@ class TestExtraRollBehavior:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 29),
+            create_stack("stack_1", StackState.ROAD, 1, 31),
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),
@@ -442,7 +442,7 @@ class TestExtraRollBehavior:
             create_stack("stack_4", StackState.HELL, 1, 0),
         ]
         p2_stacks = [
-            create_stack("stack_1", StackState.ROAD, 1, 29),  # abs = (26+29)%50 = 5
+            create_stack("stack_1", StackState.ROAD, 1, 31),  # abs = (26+29)%50 = 5
             create_stack("stack_2", StackState.HELL, 1, 0),
             create_stack("stack_3", StackState.HELL, 1, 0),
             create_stack("stack_4", StackState.HELL, 1, 0),

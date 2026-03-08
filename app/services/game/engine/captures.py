@@ -45,11 +45,11 @@ def get_absolute_position(
         board_setup: Board configuration.
 
     Returns:
-        Absolute position on the shared road (0 to squares_to_homestretch-1).
+        Absolute position on the shared road (0 to loop_length-1).
     """
     progress = piece.progress
 
-    abs_pos = (player.abs_starting_index + progress) % board_setup.squares_to_homestretch
+    abs_pos = (player.abs_starting_index + progress) % board_setup.loop_length
     logger.debug(
         "Absolute position: piece=%s, player_start=%d, progress=%d, abs_pos=%d",
         piece.stack_id,

@@ -43,6 +43,7 @@ class GameSettings(BaseModel):
 
 # Defined at game start
 class BoardSetup(BaseModel):
+    loop_length: int = Field(..., description="Total number of squares in one loop around the board")
     squares_to_win: int
     squares_to_homestretch: int
     starting_positions: list[int]
@@ -88,6 +89,7 @@ class Turn(BaseModel):
     legal_moves: list[str] = Field(default_factory=list)
     current_turn_order: int
     extra_rolls: int = 0
+    heaven_extra_rolls: int = 0
     pending_capture: PendingCapture | None = None
 
 
