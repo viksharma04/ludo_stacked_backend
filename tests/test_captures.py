@@ -74,6 +74,7 @@ class TestBasicCapture:
 
         # Verify safe spaces don't include position 8
         board_setup = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
@@ -156,6 +157,7 @@ class TestBasicCapture:
         )
 
         board_setup = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
@@ -233,6 +235,7 @@ class TestSafeSpaces:
 
         # Safe space at 0
         board_setup = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
@@ -322,6 +325,7 @@ class TestStackCaptures:
         )
 
         board_setup = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
@@ -408,6 +412,7 @@ class TestStackCaptures:
         )
 
         board_setup = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=57,
             squares_to_homestretch=52,
@@ -489,6 +494,7 @@ class TestMultiHeightCaptureDecomposition:
         )
 
         board_setup = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=55,
             squares_to_homestretch=49,
@@ -586,6 +592,7 @@ class TestMultiHeightCaptureDecomposition:
         )
 
         board_setup = BoardSetup(
+            grid_length=6,
             loop_length=52,
             squares_to_win=55,
             squares_to_homestretch=49,
