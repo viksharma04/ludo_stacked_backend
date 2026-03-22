@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # WebSocket config
     WS_HEARTBEAT_INTERVAL: int = 30
     WS_CONNECTION_TIMEOUT: int = 120
+    TURN_SKIP_GRACE_PERIOD: int = 10  # Seconds before auto-playing disconnected player's turn
 
     @field_validator("UPSTASH_REDIS_REST_URL")
     @classmethod
