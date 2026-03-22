@@ -222,8 +222,7 @@ async def _auto_play_disconnected_turns(
             break
 
         player_connected = any(
-            seat.user_id == current_player_id and seat.connected
-            for seat in snapshot.seats
+            seat.user_id == current_player_id and seat.connected for seat in snapshot.seats
         )
 
         if player_connected:
@@ -239,8 +238,7 @@ async def _auto_play_disconnected_turns(
             break
 
         player_connected = any(
-            seat.user_id == current_player_id and seat.connected
-            for seat in snapshot.seats
+            seat.user_id == current_player_id and seat.connected for seat in snapshot.seats
         )
 
         if player_connected:

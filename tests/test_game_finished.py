@@ -328,9 +328,7 @@ class TestGameEndedEvent:
         assert result.success
 
         # GameEnded event should be emitted
-        game_ended = next(
-            (e for e in result.events if isinstance(e, GameEnded)), None
-        )
+        game_ended = next((e for e in result.events if isinstance(e, GameEnded)), None)
         assert game_ended is not None, "GameEnded event should be emitted when player wins"
         assert game_ended.winner_id == PLAYER_1_ID
         assert PLAYER_1_ID in game_ended.final_rankings
@@ -338,9 +336,7 @@ class TestGameEndedEvent:
         # Game phase should be FINISHED
         assert result.state.phase == GamePhase.FINISHED
 
-    def test_game_ended_no_turn_transition_after_win(
-        self, two_player_board_setup: BoardSetup
-    ):
+    def test_game_ended_no_turn_transition_after_win(self, two_player_board_setup: BoardSetup):
         """After a win, no TurnEnded/TurnStarted events should follow GameEnded."""
         player1_stacks = [
             create_stack("stack_1", StackState.HOMESTRETCH, 1, 53),
@@ -392,9 +388,7 @@ class TestGameEndedEvent:
         assert "roll_granted" not in event_types
         assert "turn_ended" not in event_types
 
-    def test_game_ended_with_merged_stack_reaching_heaven(
-        self, two_player_board_setup: BoardSetup
-    ):
+    def test_game_ended_with_merged_stack_reaching_heaven(self, two_player_board_setup: BoardSetup):
         """A merged stack (height 2) reaching heaven with all pieces should end the game."""
         # Player 1 has stack_1_2 (contains 2 pieces) in homestretch + stack_3, stack_4 in heaven
         # When stack_1_2 reaches heaven, all 4 original pieces are in heaven -> game ends
@@ -439,22 +433,16 @@ class TestGameEndedEvent:
         result = process_action(state, RollAction(value=4), PLAYER_1_ID)
         state = result.state
 
-        result = process_action(
-            state, MoveAction(stack_id="stack_1_2", roll_value=4), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1_2", roll_value=4), PLAYER_1_ID)
         assert result.success
 
         # GameEnded should be emitted
-        game_ended = next(
-            (e for e in result.events if isinstance(e, GameEnded)), None
-        )
+        game_ended = next((e for e in result.events if isinstance(e, GameEnded)), None)
         assert game_ended is not None, "GameEnded event should be emitted"
         assert game_ended.winner_id == PLAYER_1_ID
         assert result.state.phase == GamePhase.FINISHED
 
-    def test_no_game_ended_when_stacks_still_on_board(
-        self, two_player_board_setup: BoardSetup
-    ):
+    def test_no_game_ended_when_stacks_still_on_board(self, two_player_board_setup: BoardSetup):
         """GameEnded should NOT be emitted when some stacks are still playing."""
         player1_stacks = [
             create_stack("stack_1", StackState.HOMESTRETCH, 1, 53),
@@ -502,8 +490,6 @@ class TestGameEndedEvent:
         assert result.success
 
         # GameEnded should NOT be emitted
-        game_ended = next(
-            (e for e in result.events if isinstance(e, GameEnded)), None
-        )
+        game_ended = next((e for e in result.events if isinstance(e, GameEnded)), None)
         assert game_ended is None, "GameEnded should not be emitted with stacks still playing"
         assert result.state.phase == GamePhase.IN_PROGRESS

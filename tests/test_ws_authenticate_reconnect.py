@@ -8,7 +8,6 @@ from app.schemas.ws import MessageType, WSClientMessage
 from app.services.websocket.handlers.authenticate import handle_authenticate
 from app.services.websocket.handlers.base import HandlerContext
 
-
 USER_ID = "00000000-0000-0000-0000-000000000001"
 CONN_ID = "conn-test-456"
 ROOM_ID = "room-test-123"

@@ -6,7 +6,7 @@ import pytest
 
 from app.schemas.ws import MessageType, WSClientMessage
 from app.services.websocket.handlers.base import HandlerContext
-from app.services.websocket.handlers.game import handle_game_action, _auto_play_disconnected_turns
+from app.services.websocket.handlers.game import handle_game_action
 
 USER_ID = "00000000-0000-0000-0000-000000000001"
 ROOM_ID = "room-test-123"
@@ -226,9 +226,7 @@ class TestHandleGameActionSuccess:
         mock_build.return_value = MagicMock()
         mock_process.return_value = _make_mock_process_result(success=True)
 
-        ctx = _make_context(
-            payload={"action_type": "move", "stack_id": "stack_1", "roll_value": 5}
-        )
+        ctx = _make_context(payload={"action_type": "move", "stack_id": "stack_1", "roll_value": 5})
         result = await handle_game_action(ctx)
 
         assert result.success
@@ -309,7 +307,10 @@ class TestHandleGameActionAutoMove:
         auto_event.event_type = "dice_rolled"
         turn_started_event = MagicMock()
         turn_started_event.event_type = "turn_started"
-        turn_started_event.model_dump.return_value = {"event_type": "turn_started", "auto_played": False}
+        turn_started_event.model_dump.return_value = {
+            "event_type": "turn_started",
+            "auto_played": False,
+        }
         mock_auto_play.return_value = (auto_state, [turn_started_event, auto_event])
 
         # asyncio.sleep should be awaitable

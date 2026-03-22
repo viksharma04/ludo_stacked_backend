@@ -273,8 +273,7 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
 
         current_player_id = str(current_state.current_turn.player_id)
         player_connected = any(
-            seat.user_id == current_player_id and seat.connected
-            for seat in room_snapshot.seats
+            seat.user_id == current_player_id and seat.connected for seat in room_snapshot.seats
         )
 
         if player_connected:
@@ -289,8 +288,7 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
             break
 
         player_connected = any(
-            seat.user_id == current_player_id and seat.connected
-            for seat in fresh_snapshot.seats
+            seat.user_id == current_player_id and seat.connected for seat in fresh_snapshot.seats
         )
 
         if player_connected:

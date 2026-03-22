@@ -1,8 +1,8 @@
 """Tests for handle_start_game WebSocket handler."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+
+import pytest
 
 from app.schemas.ws import MessageType, WSClientMessage
 from app.services.room.service import RoomSnapshotData, SeatData

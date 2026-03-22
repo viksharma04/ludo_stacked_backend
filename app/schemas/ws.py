@@ -156,9 +156,7 @@ class GameEventsPayload(BaseModel):
     Events are broadcast to all room members for animation/UI updates.
     """
 
-    events: list[dict[str, Any]] = Field(
-        ..., description="List of game events (serialized)"
-    )
+    events: list[dict[str, Any]] = Field(..., description="List of game events (serialized)")
 
 
 class GameStartedPayload(BaseModel):

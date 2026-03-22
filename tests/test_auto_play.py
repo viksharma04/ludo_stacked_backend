@@ -2,8 +2,6 @@
 
 from uuid import UUID
 
-import pytest
-
 from app.schemas.game_engine import (
     BoardSetup,
     CurrentEvent,
@@ -29,7 +27,10 @@ def _make_player(pid: UUID, name: str, color: str, turn_order: int, start: int) 
         color=color,
         turn_order=turn_order,
         abs_starting_index=start,
-        stacks=[Stack(stack_id=f"stack_{i}", state=StackState.HELL, height=1, progress=0) for i in range(1, 5)],
+        stacks=[
+            Stack(stack_id=f"stack_{i}", state=StackState.HELL, height=1, progress=0)
+            for i in range(1, 5)
+        ],
     )
 
 
@@ -135,6 +136,5 @@ class TestAutoPlayTurn:
 
         # Turn must have ended — either next player's turn or game finished
         assert (
-            new_state.current_turn.player_id != PLAYER_1_ID
-            or new_state.phase == GamePhase.FINISHED
+            new_state.current_turn.player_id != PLAYER_1_ID or new_state.phase == GamePhase.FINISHED
         )

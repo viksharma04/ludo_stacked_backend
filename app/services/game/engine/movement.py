@@ -23,7 +23,13 @@ from app.schemas.game_engine import (
     Turn,
 )
 
-from .captures import detect_collisions, get_absolute_position, resolve_capture, resolve_collision, resolve_stacking
+from .captures import (
+    detect_collisions,
+    get_absolute_position,
+    resolve_capture,
+    resolve_collision,
+    resolve_stacking,
+)
 from .events import (
     AnyGameEvent,
     AwaitingCaptureChoice,
@@ -883,7 +889,8 @@ def handle_homestretch_stacking(
             # Update moved_piece to the newly merged stack for the next iteration
             updated_player = next(p for p in state.players if p.player_id == player.player_id)
             moved_piece = next(
-                s for s in updated_player.stacks
+                s
+                for s in updated_player.stacks
                 if s.progress == moved_piece.progress and s.state == StackState.HOMESTRETCH
             )
             merged = True
@@ -918,7 +925,5 @@ def _check_and_handle_win(
             final_rankings=[winner_id],
         )
     )
-    new_state = state.model_copy(
-        update={"phase": GamePhase.FINISHED}
-    )
+    new_state = state.model_copy(update={"phase": GamePhase.FINISHED})
     return ProcessResult.ok(new_state, events)

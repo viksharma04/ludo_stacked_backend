@@ -730,7 +730,7 @@ class RoomService:
 
     async def _update_seat_in_db(self, room_id: str, seat_index: int, user_id: str | None) -> bool:
         """Update a seat in the database.
-        
+
         If user_id is None, clears the seat (for rollback).
         Otherwise, assigns the seat to the user (optimistic lock).
         """
@@ -1208,9 +1208,7 @@ class RoomService:
             )
 
             if not response.data or len(response.data) == 0:
-                logger.warning(
-                    "Room %s not found in DB when updating to in_game", room_id
-                )
+                logger.warning("Room %s not found in DB when updating to in_game", room_id)
                 return False
 
             # Increment room version
@@ -1220,9 +1218,7 @@ class RoomService:
             return True
 
         except Exception as e:
-            logger.exception(
-                "Error updating room %s status to in_game: %s", room_id, e
-            )
+            logger.exception("Error updating room %s status to in_game: %s", room_id, e)
             return False
 
     async def leave_room(self, room_id: str, user_id: str) -> LeaveRoomResult:
