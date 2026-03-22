@@ -171,3 +171,12 @@ class GameStartedPayload(BaseModel):
     events: list[dict[str, Any]] = Field(
         ..., description="List of game events (game_started, turn_started)"
     )
+
+
+class GameStatePayload(BaseModel):
+    """Payload for GAME_STATE message to client.
+
+    Contains the full game state for reconnection sync.
+    """
+
+    game_state: dict[str, Any] = Field(..., description="Full game state (serialized)")

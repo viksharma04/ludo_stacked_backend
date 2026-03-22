@@ -63,6 +63,7 @@ async def dispatch(ctx: HandlerContext) -> HandlerResult | None:
 from . import (
     authenticate,  # noqa: E402, F401
     game,  # noqa: E402, F401
+    game_state,  # noqa: E402, F401
     leave,  # noqa: E402, F401
     ping,  # noqa: E402, F401
     ready,  # noqa: E402, F401
