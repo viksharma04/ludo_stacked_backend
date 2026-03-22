@@ -109,6 +109,7 @@ class TurnStarted(GameEvent):
     event_type: Literal["turn_started"] = "turn_started"
     player_id: UUID
     turn_number: int
+    auto_played: bool = False
 
 
 class RollGranted(GameEvent):
