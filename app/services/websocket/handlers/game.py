@@ -146,10 +146,10 @@ async def handle_game_action(ctx: HandlerContext) -> HandlerResult:
 
     # Save new state
     if result.state is not None:
-        await save_game_state(room_id, result.state.model_dump())
+        await save_game_state(room_id, result.state.model_dump(mode="json"))
 
     # Serialize events for broadcast
-    serialized_events = [event.model_dump() for event in result.events]
+    serialized_events = [event.model_dump(mode="json") for event in result.events]
 
     logger.info(
         "Game action processed for user %s in room %s: %d events",
@@ -250,14 +250,14 @@ async def _auto_play_disconnected_turns(
         # Set auto_played flag on TurnStarted events
         event_dicts = []
         for event in events:
-            d = event.model_dump()
+            d = event.model_dump(mode="json")
             if event.event_type == "turn_started":
                 d["auto_played"] = True
             event_dicts.append(d)
         all_auto_events.extend(event_dicts)
 
         # Save updated state
-        await save_game_state(room_id, state.model_dump())
+        await save_game_state(room_id, state.model_dump(mode="json"))
 
         logger.info(
             "Auto-played disconnected player %s turn in room %s",

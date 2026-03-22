@@ -252,13 +252,13 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
         )
 
     # Save game state
-    await save_game_state(room_id, result.state.model_dump())
+    await save_game_state(room_id, result.state.model_dump(mode="json"))
 
     # Update room status to in_game
     await room_service.update_room_status_to_in_game(room_id)
 
     # Serialize events and state for broadcast
-    serialized_events = [event.model_dump() for event in result.events]
+    serialized_events = [event.model_dump(mode="json") for event in result.events]
     current_state = result.state
 
     # Check if first player is disconnected and needs auto-play
@@ -298,15 +298,15 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
 
         # Set auto_played flag on TurnStarted events
         for event in auto_events:
-            d = event.model_dump()
+            d = event.model_dump(mode="json")
             if event.event_type == "turn_started":
                 d["auto_played"] = True
             auto_event_dicts.append(d)
 
-        await save_game_state(room_id, current_state.model_dump())
+        await save_game_state(room_id, current_state.model_dump(mode="json"))
 
     all_events = serialized_events + auto_event_dicts
-    serialized_state = current_state.model_dump()
+    serialized_state = current_state.model_dump(mode="json")
 
     logger.info(
         "Game started for room %s by host %s: %d events, %d players",
