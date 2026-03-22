@@ -656,3 +656,42 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
 # In app/services/websocket/handlers/__init__.py
 from . import authenticate, leave, ping, ready, start_game  # Add new import
 ```
+
+## Reconnection & Game State Sync
+
+### Game State Persistence
+
+Game state is stored in Redis with a 6-hour TTL. Key pattern: `room:{room_id}:game_state`.
+
+### Reconnection Flow
+
+When a player reconnects to a room with an active game:
+
+1. Client connects to `ws://host/api/v1/ws`
+2. Client sends: `{"type": "authenticate", "payload": {"token": "<jwt>", "room_code": "ABC123"}}`
+3. Server responds with `authenticated` message (including room snapshot)
+4. If room status is `in_game`, server auto-pushes `game_state` message with full state
+
+### game_state Request
+
+Clients can also explicitly request the current game state:
+
+```json
+// Client sends:
+{"type": "game_state", "request_id": "..."}
+
+// Server responds:
+{"type": "game_state", "request_id": "...", "payload": {"game_state": {...}}}
+```
+
+Returns `GAME_NOT_FOUND` error if no game is in progress.
+
+### Auto-Move for Disconnected Players
+
+When a game action is processed (or a game starts) and the next player to move is disconnected:
+
+1. Server waits `TURN_SKIP_GRACE_PERIOD` seconds (default: 10s, configurable)
+2. Re-checks if the player reconnected during the grace period
+3. If still disconnected, auto-plays their turn (random roll, first available move)
+4. `TurnStarted` events for auto-played turns include `auto_played: true`
+5. Handles consecutive disconnected players (loops until a connected player's turn)
