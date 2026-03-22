@@ -6,7 +6,7 @@ import pytest
 
 from app.schemas.ws import MessageType, WSClientMessage
 from app.services.websocket.handlers.base import HandlerContext
-from app.services.websocket.handlers.game import handle_game_action
+from app.services.websocket.handlers.game import handle_game_action, _auto_play_disconnected_turns
 
 USER_ID = "00000000-0000-0000-0000-000000000001"
 ROOM_ID = "room-test-123"
@@ -238,3 +238,87 @@ class TestHandleGameActionSuccess:
         assert call_args["action_type"] == "move"
         assert call_args["stack_id"] == "stack_1"
         assert call_args["roll_value"] == 5
+
+
+class TestHandleGameActionAutoMove:
+    """Test auto-move for disconnected players after action processing."""
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.game.get_settings")
+    @patch("app.services.websocket.handlers.game.get_room_service")
+    @patch("app.services.websocket.handlers.game.auto_play_turn")
+    @patch("app.services.websocket.handlers.game.save_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.game.process_action")
+    @patch("app.services.websocket.handlers.game.build_action_from_payload")
+    @patch("app.schemas.game_engine.GameState.model_validate")
+    @patch("app.services.websocket.handlers.game.get_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.game.asyncio")
+    async def test_auto_plays_disconnected_player_after_grace(
+        self,
+        mock_asyncio: MagicMock,
+        mock_get_state: AsyncMock,
+        mock_validate: MagicMock,
+        mock_build: MagicMock,
+        mock_process: MagicMock,
+        mock_save: AsyncMock,
+        mock_auto_play: MagicMock,
+        mock_get_room: MagicMock,
+        mock_get_settings: MagicMock,
+    ) -> None:
+        # Setup: action processes successfully, next player is disconnected
+        mock_get_state.return_value = _make_mock_game_state_dict()
+        mock_validate.return_value = MagicMock()
+        mock_build.return_value = MagicMock()
+
+        # The process result - next player has turn_order=2
+        process_result = _make_mock_process_result(success=True)
+        current_turn = MagicMock()
+        current_turn.player_id = "00000000-0000-0000-0000-000000000002"
+        process_result.state.current_turn = current_turn
+        process_result.state.phase.value = "in_progress"
+        process_result.state.players = [MagicMock(), MagicMock()]  # 2 players
+        mock_process.return_value = process_result
+
+        # Room service returns snapshot showing player 2 disconnected
+        room_service = AsyncMock()
+        seat1 = MagicMock()
+        seat1.user_id = USER_ID
+        seat1.connected = True
+        seat2 = MagicMock()
+        seat2.user_id = "00000000-0000-0000-0000-000000000002"
+        seat2.connected = False
+        snapshot = MagicMock()
+        snapshot.seats = [seat1, seat2]
+        room_service.get_room_snapshot.return_value = snapshot
+        mock_get_room.return_value = room_service
+
+        # Settings
+        settings = MagicMock()
+        settings.TURN_SKIP_GRACE_PERIOD = 0  # No delay in tests
+        mock_get_settings.return_value = settings
+
+        # auto_play_turn returns new state where next player (P1) is connected
+        auto_state = MagicMock()
+        auto_turn_mock = MagicMock()
+        auto_turn_mock.player_id = USER_ID  # Back to P1 who is connected
+        auto_state.current_turn = auto_turn_mock
+        auto_state.phase.value = "in_progress"
+        auto_state.model_dump.return_value = {"phase": "in_progress", "auto_played": True}
+        auto_event = MagicMock()
+        auto_event.model_dump.return_value = {"event_type": "dice_rolled"}
+        auto_event.event_type = "dice_rolled"
+        turn_started_event = MagicMock()
+        turn_started_event.event_type = "turn_started"
+        turn_started_event.model_dump.return_value = {"event_type": "turn_started", "auto_played": False}
+        mock_auto_play.return_value = (auto_state, [turn_started_event, auto_event])
+
+        # asyncio.sleep should be awaitable
+        mock_asyncio.sleep = AsyncMock()
+
+        ctx = _make_context()
+        result = await handle_game_action(ctx)
+
+        assert result.success
+        mock_auto_play.assert_called_once()
+        # save_game_state called twice: once for original action, once for auto-play
+        assert mock_save.call_count == 2
