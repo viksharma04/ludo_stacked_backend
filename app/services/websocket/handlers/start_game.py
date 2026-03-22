@@ -1,8 +1,10 @@
 """Handler for START_GAME messages."""
 
+import asyncio
 import logging
 from uuid import UUID
 
+from app.config import get_settings
 from app.schemas.game_engine import GameSettings, PlayerAttributes
 from app.schemas.ws import (
     GameSettingsPayload,
@@ -11,6 +13,7 @@ from app.schemas.ws import (
     WSServerMessage,
 )
 from app.services.game import StartGameAction, initialize_game, process_action
+from app.services.game.auto_play import auto_play_turn
 from app.services.game.state import get_game_state, save_game_state
 from app.services.room.service import RoomSnapshotData, get_room_service
 
@@ -256,14 +259,63 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
 
     # Serialize events and state for broadcast
     serialized_events = [event.model_dump() for event in result.events]
-    serialized_state = result.state.model_dump()
+    current_state = result.state
+
+    # Check if first player is disconnected and needs auto-play
+    auto_event_dicts: list[dict] = []
+    max_auto_plays = len(current_state.players)
+
+    for _ in range(max_auto_plays):
+        if current_state.current_turn is None:
+            break
+        if current_state.phase.value == "finished":
+            break
+
+        current_player_id = str(current_state.current_turn.player_id)
+        player_connected = any(
+            seat.user_id == current_player_id and seat.connected
+            for seat in room_snapshot.seats
+        )
+
+        if player_connected:
+            break
+
+        settings = get_settings()
+        await asyncio.sleep(settings.TURN_SKIP_GRACE_PERIOD)
+
+        # Re-check from Redis
+        fresh_snapshot = await room_service.get_room_snapshot(room_id)
+        if fresh_snapshot is None:
+            break
+
+        player_connected = any(
+            seat.user_id == current_player_id and seat.connected
+            for seat in fresh_snapshot.seats
+        )
+
+        if player_connected:
+            break
+
+        current_state, auto_events = auto_play_turn(current_state, current_player_id)
+
+        # Set auto_played flag on TurnStarted events
+        for event in auto_events:
+            d = event.model_dump()
+            if event.event_type == "turn_started":
+                d["auto_played"] = True
+            auto_event_dicts.append(d)
+
+        await save_game_state(room_id, current_state.model_dump())
+
+    all_events = serialized_events + auto_event_dicts
+    serialized_state = current_state.model_dump()
 
     logger.info(
         "Game started for room %s by host %s: %d events, %d players",
         room_id,
         ctx.user_id,
-        len(result.events),
-        len(result.state.players),
+        len(all_events),
+        len(current_state.players),
     )
 
     # Broadcast GAME_STARTED with full state to ALL players so they can render UI
@@ -275,14 +327,14 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
             request_id=ctx.message.request_id,
             payload=GameStartedPayload(
                 game_state=serialized_state,
-                events=serialized_events,
+                events=all_events,
             ).model_dump(),
         ),
         broadcast=WSServerMessage(
             type=MessageType.GAME_STARTED,
             payload=GameStartedPayload(
                 game_state=serialized_state,
-                events=serialized_events,
+                events=all_events,
             ).model_dump(),
         ),
         room_id=room_id,
