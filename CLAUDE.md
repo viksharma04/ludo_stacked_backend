@@ -60,7 +60,8 @@ The game engine handles all Ludo Stacked game mechanics:
 
 Related:
 - **`app/services/game/start_game.py`** - Game initialization, creates initial stacks and board setup
-- **`app/services/game/state.py`** - In-memory game state storage (`get_game_state`, `save_game_state`)
+- **`app/services/game/state.py`** - Redis-backed game state storage (`get_game_state`, `save_game_state`, `delete_game_state`), 6-hour TTL
+- **`app/services/game/auto_play.py`** - Auto-play logic for disconnected players (`get_next_auto_action`, `auto_play_turn`)
 
 ### Board Geometry (grid_length = g)
 
@@ -112,6 +113,10 @@ Related:
   - `ws:user:{user_id}:conn_count` - atomic counter for presence tracking
   - `room:{room_id}:meta` - room metadata hash
   - `room:{room_id}:seats` - seat occupancy hash
+  - `room:{room_id}:game_state` - JSON game state, 6-hour TTL
+- **Reconnection Flow**: authenticate → authenticated → game_state (auto-push if room status is `in_game`)
+- **Auto-Move**: After processing an action (or starting a game), if the next player is disconnected, the server waits `TURN_SKIP_GRACE_PERIOD` seconds, then auto-plays their turn. `TurnStarted` events include `auto_played: true` for auto-played turns.
+- **Config**: `TURN_SKIP_GRACE_PERIOD` (default 10s) controls the grace period before auto-playing a disconnected player's turn
 
 See `docs/websockets.md`, `docs/redis.md`, and `docs/db_schema.md` for detailed documentation. Design documents live in `docs/plans/`.
 
@@ -129,7 +134,8 @@ Tests live in `tests/` and cover the game engine and WebSocket handlers. Run wit
 
 - **`conftest.py`** - Shared fixtures: fixed player UUIDs, standard/two-player board setups, helper state builders
 - Engine test files: `test_movement.py`, `test_rolling.py`, `test_captures.py`, `test_validation.py`, `test_stack_utils.py`, `test_stacking.py`, `test_events.py`, `test_game_finished.py`, `test_get_out_of_hell.py`, `test_start_game_handler.py`, `test_board_geometry.py`, `test_homestretch_heaven.py`, `test_hell_exit_collisions.py`, `test_multi_roll_allocation.py`, `test_capture_chains.py`, `test_capture_choice.py`, `test_full_turn_flow.py`
-- WebSocket handler tests: `test_ws_start_game_handler_flow.py`, `test_ws_game_action_handler.py` — unit tests with mocked dependencies
+- WebSocket handler tests: `test_ws_start_game_handler_flow.py`, `test_ws_game_action_handler.py`, `test_ws_game_state_handler.py`, `test_ws_authenticate_reconnect.py` — unit tests with mocked dependencies
+- State/auto-play tests: `test_game_state_redis.py`, `test_auto_play.py`
 - Engine tests construct `GameState` directly and call engine functions; handler tests mock services and validate handler logic
 - All tests currently pass. When new game rules are added, failing tests may be used as the implementation backlog. See `docs/plans/2026-02-28-core-engine-test-suite-design.md` for design details.
 - **Board fixtures use grid_length=6**: `squares_to_win=55`, `squares_to_homestretch=50`, `safe_spaces=[0,7,13,20,26,33,39,46]`

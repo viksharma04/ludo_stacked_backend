@@ -212,7 +212,9 @@ def _player_color_code(player_id, state: GameState) -> str:
 def render_board(state: GameState) -> str:
     """Render the compact board table."""
     lines = []
-    lines.append(f"  {DIM}\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510{RESET}")
+    lines.append(
+        f"  {DIM}\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510{RESET}"
+    )
 
     current_pid = state.current_turn.player_id if state.current_turn else None
 
@@ -222,20 +224,26 @@ def render_board(state: GameState) -> str:
         is_current = player.player_id == current_pid
         marker = f"{BOLD}\u25ba" if is_current else " "
 
-        stacks_str = " ".join(format_stack(s) for s in sorted(player.stacks, key=lambda s: s.stack_id))
+        stacks_str = " ".join(
+            format_stack(s) for s in sorted(player.stacks, key=lambda s: s.stack_id)
+        )
 
         # Pad label to 8 chars (accounting for color codes)
         row = f"  {DIM}\u2502{RESET}{marker}{color}{label:<8}{RESET}{DIM}\u2502{RESET} {stacks_str}"
         # Add closing border with padding
         # We need to calculate visible length for padding
-        visible_stacks = " ".join(_visible_stack(s) for s in sorted(player.stacks, key=lambda s: s.stack_id))
+        visible_stacks = " ".join(
+            _visible_stack(s) for s in sorted(player.stacks, key=lambda s: s.stack_id)
+        )
         pad_needed = 39 - len(visible_stacks)
         if pad_needed > 0:
             row += " " * pad_needed
         row += f"{DIM}\u2502{RESET}"
         lines.append(row)
 
-    lines.append(f"  {DIM}\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518{RESET}")
+    lines.append(
+        f"  {DIM}\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518{RESET}"
+    )
     return "\n".join(lines)
 
 
@@ -421,7 +429,9 @@ def run():
         if winner:
             winner_name = _name_by_id(winner, state)
             print()
-            print(f"  {BOLD}{CYAN}\U0001f3c6\U0001f3c6\U0001f3c6 {winner_name} wins the game! \U0001f3c6\U0001f3c6\U0001f3c6{RESET}")
+            print(
+                f"  {BOLD}{CYAN}\U0001f3c6\U0001f3c6\U0001f3c6 {winner_name} wins the game! \U0001f3c6\U0001f3c6\U0001f3c6{RESET}"
+            )
             print()
             print(f"  {DIM}Game finished in {action_num} actions.{RESET}")
             print(f"  {DIM}Press any key to exit.{RESET}")

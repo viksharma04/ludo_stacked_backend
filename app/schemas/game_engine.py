@@ -44,7 +44,9 @@ class GameSettings(BaseModel):
 # Defined at game start
 class BoardSetup(BaseModel):
     grid_length: int
-    loop_length: int = Field(..., description="Total number of squares in one loop around the board")
+    loop_length: int = Field(
+        ..., description="Total number of squares in one loop around the board"
+    )
     squares_to_win: int
     squares_to_homestretch: int
     starting_positions: list[int]
@@ -66,6 +68,7 @@ class LegalMoveGroup(BaseModel):
 
 class RollMoveGroup(BaseModel):
     """Legal moves available for a specific roll value."""
+
     roll: int
     move_groups: list[LegalMoveGroup]
 
@@ -78,6 +81,7 @@ class Player(PlayerAttributes):
 
 class PendingCapture(BaseModel):
     """Context stored when a move triggers a multi-target capture choice."""
+
     moving_stack_id: str
     position: int
     capturable_targets: list[str]  # "{player_id}:{stack_id}" format

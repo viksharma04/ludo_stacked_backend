@@ -204,9 +204,7 @@ class TestHeavenExtraRollFullFlow:
         heaven_grants = [e for e in roll_granted if e.reason == "reached_heaven"]
         assert len(heaven_grants) == 1
 
-    def test_game_ending_heaven_does_not_grant_usable_roll(
-        self, standard_board_setup: BoardSetup
-    ):
+    def test_game_ending_heaven_does_not_grant_usable_roll(self, standard_board_setup: BoardSetup):
         """When the last stack reaches heaven (game over), no extra roll is used."""
         player1_stacks = [
             create_stack("stack_1", StackState.HOMESTRETCH, 1, 52),

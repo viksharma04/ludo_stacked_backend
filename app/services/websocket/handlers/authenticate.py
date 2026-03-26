@@ -4,9 +4,11 @@ import logging
 
 from app.schemas.ws import (
     AuthenticatePayload,
+    GameStatePayload,
     MessageType,
     WSServerMessage,
 )
+from app.services.game.state import get_game_state
 from app.services.room.service import get_room_service
 from app.services.websocket.auth import get_ws_authenticator
 
@@ -143,6 +145,26 @@ async def handle_authenticate(ctx: HandlerContext) -> HandlerResult:
         user_id,
         payload.room_code,
     )
+
+    # Auto-push game state if room has an active game
+    room_status = room_snapshot_data.status if hasattr(room_snapshot_data, "status") else None
+    if room_status == "in_game":
+        game_state_dict = await get_game_state(room_id)
+        if game_state_dict is not None:
+            await ctx.manager.send_to_connection(
+                ctx.connection_id,
+                WSServerMessage(
+                    type=MessageType.GAME_STATE,
+                    payload=GameStatePayload(
+                        game_state=game_state_dict,
+                    ).model_dump(),
+                ),
+            )
+            logger.info(
+                "Auto-pushed game state to reconnecting user %s in room %s",
+                user_id[:8],
+                room_id,
+            )
 
     # Broadcast room update to other members
     return HandlerResult(

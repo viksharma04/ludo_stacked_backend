@@ -1,8 +1,10 @@
 """Handler for GAME_ACTION messages."""
 
+import asyncio
 import logging
 from uuid import UUID
 
+from app.config import get_settings
 from app.schemas.game_engine import GameState
 from app.schemas.ws import (
     GameActionPayload,
@@ -11,7 +13,9 @@ from app.schemas.ws import (
     WSServerMessage,
 )
 from app.services.game import ProcessResult, build_action_from_payload, process_action
+from app.services.game.auto_play import auto_play_turn
 from app.services.game.state import get_game_state, save_game_state
+from app.services.room.service import get_room_service
 
 from . import handler
 from .base import (
@@ -142,10 +146,10 @@ async def handle_game_action(ctx: HandlerContext) -> HandlerResult:
 
     # Save new state
     if result.state is not None:
-        await save_game_state(room_id, result.state.model_dump())
+        await save_game_state(room_id, result.state.model_dump(mode="json"))
 
     # Serialize events for broadcast
-    serialized_events = [event.model_dump() for event in result.events]
+    serialized_events = [event.model_dump(mode="json") for event in result.events]
 
     logger.info(
         "Game action processed for user %s in room %s: %d events",
@@ -154,17 +158,128 @@ async def handle_game_action(ctx: HandlerContext) -> HandlerResult:
         len(result.events),
     )
 
-    # Return events to requester and broadcast to room
+    # Build initial response and broadcast
+    response = WSServerMessage(
+        type=MessageType.GAME_EVENTS,
+        request_id=ctx.message.request_id,
+        payload=GameEventsPayload(events=serialized_events).model_dump(),
+    )
+    broadcast = WSServerMessage(
+        type=MessageType.GAME_EVENTS,
+        payload=GameEventsPayload(events=serialized_events).model_dump(),
+    )
+
+    # Check for disconnected player auto-move
+    if result.state is not None and result.state.phase.value == "in_progress":
+        auto_events, auto_played_ids = await _auto_play_disconnected_turns(
+            room_id, result.state, ctx
+        )
+        if auto_events:
+            # Mark TurnStarted in original events for auto-played players
+            for d in serialized_events:
+                if (
+                    d.get("event_type") == "turn_started"
+                    and d.get("player_id") in auto_played_ids
+                ):
+                    d["auto_played"] = True
+            # Append auto-play events to the broadcast
+            all_events = serialized_events + auto_events
+            broadcast = WSServerMessage(
+                type=MessageType.GAME_EVENTS,
+                payload=GameEventsPayload(events=all_events).model_dump(),
+            )
+            response = WSServerMessage(
+                type=MessageType.GAME_EVENTS,
+                request_id=ctx.message.request_id,
+                payload=GameEventsPayload(events=all_events).model_dump(),
+            )
+
     return HandlerResult(
         success=True,
-        response=WSServerMessage(
-            type=MessageType.GAME_EVENTS,
-            request_id=ctx.message.request_id,
-            payload=GameEventsPayload(events=serialized_events).model_dump(),
-        ),
-        broadcast=WSServerMessage(
-            type=MessageType.GAME_EVENTS,
-            payload=GameEventsPayload(events=serialized_events).model_dump(),
-        ),
+        response=response,
+        broadcast=broadcast,
         room_id=room_id,
     )
+
+
+async def _auto_play_disconnected_turns(
+    room_id: str,
+    current_state: "GameState",
+    ctx: HandlerContext,
+) -> tuple[list[dict], set[str]]:
+    """Check if current player is disconnected and auto-play their turn after grace period.
+
+    Returns tuple of (serialized auto-play events, set of auto-played player ID strings).
+    Handles consecutive disconnected players.
+    """
+    all_auto_events: list[dict] = []
+    auto_played_ids: set[str] = set()
+    state = current_state
+    max_auto_plays = len(state.players)  # Safety: don't auto-play more than full rotation
+
+    for _ in range(max_auto_plays):
+        if state.current_turn is None:
+            break
+        if state.phase.value == "finished":
+            break
+
+        current_player_id = state.current_turn.player_id
+        current_player_id_str = str(current_player_id)
+
+        # Check if current player is connected
+        room_service = get_room_service()
+        snapshot = await room_service.get_room_snapshot(room_id)
+        if snapshot is None:
+            break
+
+        player_connected = any(
+            seat.user_id == current_player_id_str and seat.connected
+            for seat in snapshot.seats
+        )
+
+        if player_connected:
+            break
+
+        # Grace period
+        settings = get_settings()
+        await asyncio.sleep(settings.TURN_SKIP_GRACE_PERIOD)
+
+        # Re-check after grace period
+        snapshot = await room_service.get_room_snapshot(room_id)
+        if snapshot is None:
+            break
+
+        player_connected = any(
+            seat.user_id == current_player_id_str and seat.connected
+            for seat in snapshot.seats
+        )
+
+        if player_connected:
+            break
+
+        auto_played_ids.add(current_player_id_str)
+
+        # Auto-play this player's turn
+        state, events = auto_play_turn(state, current_player_id)
+
+        event_dicts = [event.model_dump(mode="json") for event in events]
+        all_auto_events.extend(event_dicts)
+
+        # Save updated state
+        await save_game_state(room_id, state.model_dump(mode="json"))
+
+        logger.info(
+            "Auto-played disconnected player %s turn in room %s",
+            current_player_id_str[:8],
+            room_id,
+        )
+
+    # Mark TurnStarted events only for players who were actually auto-played
+    for d in all_auto_events:
+        if (
+            d.get("event_type") == "turn_started"
+            and d.get("player_id") in auto_played_ids
+        ):
+            d["auto_played"] = True
+
+    return all_auto_events, auto_played_ids

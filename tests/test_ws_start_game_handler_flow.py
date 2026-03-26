@@ -1,13 +1,15 @@
 """Tests for handle_start_game WebSocket handler."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+
+import pytest
 
 from app.schemas.ws import MessageType, WSClientMessage
 from app.services.room.service import RoomSnapshotData, SeatData
 from app.services.websocket.handlers.base import HandlerContext
 from app.services.websocket.handlers.start_game import handle_start_game
+
+PLAYER_3_ID = "00000000-0000-0000-0000-000000000003"
 
 # Fixed UUIDs
 HOST_ID = "00000000-0000-0000-0000-000000000001"
@@ -390,3 +392,164 @@ class TestHandleStartGameSettings:
         game_state = result.response.payload["game_state"]
         assert game_state["board_setup"]["squares_to_win"] == 55
         assert game_state["board_setup"]["get_out_rolls"] == [6]
+
+
+class TestStartGameFirstPlayerAutoMove:
+    """Test that start_game auto-plays the first player if disconnected."""
+
+    @pytest.mark.asyncio
+    @patch("app.services.websocket.handlers.start_game.get_settings")
+    @patch("app.services.websocket.handlers.start_game.auto_play_turn")
+    @patch("app.services.websocket.handlers.start_game.save_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    @patch("app.services.websocket.handlers.start_game.asyncio")
+    async def test_auto_plays_first_player_if_disconnected(
+        self,
+        mock_asyncio: MagicMock,
+        mock_get_room_service: MagicMock,
+        mock_get_game_state: AsyncMock,
+        mock_save_game_state: AsyncMock,
+        mock_auto_play: MagicMock,
+        mock_get_settings: MagicMock,
+    ) -> None:
+        # Host is connected but first player (host) is disconnected in seat data
+        snapshot = RoomSnapshotData(
+            room_id=ROOM_ID,
+            code="ABC123",
+            status="ready_to_start",
+            visibility="private",
+            ruleset_id="classic",
+            max_players=4,
+            seats=[
+                SeatData(
+                    seat_index=0,
+                    user_id=HOST_ID,
+                    display_name="Host",
+                    ready="ready",
+                    connected=False,  # First player disconnected
+                    is_host=True,
+                ),
+                SeatData(
+                    seat_index=1,
+                    user_id=PLAYER_2_ID,
+                    display_name="Player 2",
+                    ready="ready",
+                    connected=True,
+                    is_host=False,
+                ),
+                SeatData(seat_index=2),
+                SeatData(seat_index=3),
+            ],
+            version=1,
+        )
+
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_service.update_room_status_to_in_game = AsyncMock()
+        mock_get_room_service.return_value = mock_service
+        mock_get_game_state.return_value = None
+
+        # Settings with no grace period for tests
+        settings = MagicMock()
+        settings.TURN_SKIP_GRACE_PERIOD = 0
+        mock_get_settings.return_value = settings
+
+        # asyncio.sleep should be awaitable
+        mock_asyncio.sleep = AsyncMock()
+
+        # auto_play_turn returns state where P2 has the turn
+        auto_state = MagicMock()
+        auto_turn = MagicMock()
+        auto_turn.player_id = PLAYER_2_ID
+        auto_state.current_turn = auto_turn
+        auto_state.phase.value = "in_progress"
+        auto_state.players = [MagicMock(), MagicMock()]
+        auto_state.model_dump.return_value = {"phase": "in_progress", "auto_played": True}
+        auto_event = MagicMock()
+        auto_event.event_type = "dice_rolled"
+        auto_event.model_dump.return_value = {"event_type": "dice_rolled"}
+        turn_started = MagicMock()
+        turn_started.event_type = "turn_started"
+        turn_started.model_dump.return_value = {"event_type": "turn_started", "auto_played": False}
+        mock_auto_play.return_value = (auto_state, [turn_started, auto_event])
+
+        ctx = _make_context()
+        result = await handle_start_game(ctx)
+
+        assert result.success
+        mock_auto_play.assert_called_once()
+        # save_game_state called twice: once for initial state, once for auto-play
+        assert mock_save_game_state.call_count == 2
+
+
+class TestStartGameAutoPlayIntegration:
+    """Integration tests: real engine verifies auto_played on correct TurnStarted."""
+
+    @pytest.mark.asyncio
+    @patch("app.services.game.auto_play.random.randint", return_value=1)
+    @patch("app.services.websocket.handlers.start_game.get_settings")
+    @patch("app.services.websocket.handlers.start_game.save_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_game_state", new_callable=AsyncMock)
+    @patch("app.services.websocket.handlers.start_game.get_room_service")
+    @patch("app.services.websocket.handlers.start_game.asyncio")
+    async def test_first_player_disconnected_marks_correct_turn_started(
+        self,
+        mock_asyncio: MagicMock,
+        mock_get_room_service: MagicMock,
+        mock_get_game_state: AsyncMock,
+        mock_save_game_state: AsyncMock,
+        mock_get_settings: MagicMock,
+        mock_randint: MagicMock,
+    ) -> None:
+        """First player disconnected: their TurnStarted auto_played, next player's not."""
+        snapshot = RoomSnapshotData(
+            room_id=ROOM_ID,
+            code="ABC123",
+            status="ready_to_start",
+            visibility="private",
+            ruleset_id="classic",
+            max_players=4,
+            seats=[
+                SeatData(
+                    seat_index=0, user_id=HOST_ID, display_name="Host",
+                    ready="ready", connected=False, is_host=True,
+                ),
+                SeatData(
+                    seat_index=1, user_id=PLAYER_2_ID, display_name="Player 2",
+                    ready="ready", connected=True, is_host=False,
+                ),
+                SeatData(seat_index=2),
+                SeatData(seat_index=3),
+            ],
+            version=1,
+        )
+
+        mock_service = AsyncMock()
+        mock_service.get_room_snapshot.return_value = snapshot
+        mock_service.update_room_status_to_in_game = AsyncMock()
+        mock_get_room_service.return_value = mock_service
+        mock_get_game_state.return_value = None
+
+        settings = MagicMock()
+        settings.TURN_SKIP_GRACE_PERIOD = 0
+        mock_get_settings.return_value = settings
+        mock_asyncio.sleep = AsyncMock()
+
+        ctx = _make_context()
+        result = await handle_start_game(ctx)
+
+        assert result.success
+
+        all_events = result.broadcast.payload["events"]
+        turn_started = [e for e in all_events if e.get("event_type") == "turn_started"]
+
+        # Host (first player) was auto-played → their TurnStarted marked
+        host_ts = [ts for ts in turn_started if ts["player_id"] == HOST_ID]
+        assert len(host_ts) == 1
+        assert host_ts[0]["auto_played"] is True
+
+        # Player 2 is connected → their TurnStarted NOT marked
+        p2_ts = [ts for ts in turn_started if ts["player_id"] == PLAYER_2_ID]
+        assert len(p2_ts) == 1
+        assert p2_ts[0]["auto_played"] is not True

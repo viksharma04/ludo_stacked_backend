@@ -524,22 +524,16 @@ class TestMultiHeightCaptureDecomposition:
         assert result.success
         state = result.state
 
-        result = process_action(
-            state, MoveAction(stack_id="stack_1_2", roll_value=4), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1_2", roll_value=4), PLAYER_1_ID)
         assert result.success
 
         # StackCaptured event should exist
-        capture_event = next(
-            (e for e in result.events if isinstance(e, StackCaptured)), None
-        )
+        capture_event = next((e for e in result.events if isinstance(e, StackCaptured)), None)
         assert capture_event is not None
 
         # StackUpdate should be emitted for the decomposition of the captured stack
         update_events = [e for e in result.events if isinstance(e, StackUpdate)]
-        decomp_event = next(
-            (e for e in update_events if e.player_id == PLAYER_2_ID), None
-        )
+        decomp_event = next((e for e in update_events if e.player_id == PLAYER_2_ID), None)
         assert decomp_event is not None, (
             "StackUpdate should be emitted for captured player's stack decomposition"
         )
@@ -622,9 +616,7 @@ class TestMultiHeightCaptureDecomposition:
         assert result.success
         state = result.state
 
-        result = process_action(
-            state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID
-        )
+        result = process_action(state, MoveAction(stack_id="stack_1", roll_value=3), PLAYER_1_ID)
         assert result.success
 
         # StackCaptured should exist
@@ -632,8 +624,7 @@ class TestMultiHeightCaptureDecomposition:
 
         # No StackUpdate for the captured player (height 1 has no decomposition)
         update_events = [
-            e for e in result.events
-            if isinstance(e, StackUpdate) and e.player_id == PLAYER_2_ID
+            e for e in result.events if isinstance(e, StackUpdate) and e.player_id == PLAYER_2_ID
         ]
         assert len(update_events) == 0, (
             "No StackUpdate should be emitted for height-1 capture (no decomposition)"
