@@ -171,8 +171,17 @@ async def handle_game_action(ctx: HandlerContext) -> HandlerResult:
 
     # Check for disconnected player auto-move
     if result.state is not None and result.state.phase.value == "in_progress":
-        auto_events = await _auto_play_disconnected_turns(room_id, result.state, ctx)
+        auto_events, auto_played_ids = await _auto_play_disconnected_turns(
+            room_id, result.state, ctx
+        )
         if auto_events:
+            # Mark TurnStarted in original events for auto-played players
+            for d in serialized_events:
+                if (
+                    d.get("event_type") == "turn_started"
+                    and d.get("player_id") in auto_played_ids
+                ):
+                    d["auto_played"] = True
             # Append auto-play events to the broadcast
             all_events = serialized_events + auto_events
             broadcast = WSServerMessage(
@@ -197,13 +206,14 @@ async def _auto_play_disconnected_turns(
     room_id: str,
     current_state: "GameState",
     ctx: HandlerContext,
-) -> list[dict]:
+) -> tuple[list[dict], set[str]]:
     """Check if current player is disconnected and auto-play their turn after grace period.
 
-    Returns list of serialized auto-play events (empty if no auto-play needed).
+    Returns tuple of (serialized auto-play events, set of auto-played player ID strings).
     Handles consecutive disconnected players.
     """
     all_auto_events: list[dict] = []
+    auto_played_ids: set[str] = set()
     state = current_state
     max_auto_plays = len(state.players)  # Safety: don't auto-play more than full rotation
 
@@ -213,7 +223,8 @@ async def _auto_play_disconnected_turns(
         if state.phase.value == "finished":
             break
 
-        current_player_id = str(state.current_turn.player_id)
+        current_player_id = state.current_turn.player_id
+        current_player_id_str = str(current_player_id)
 
         # Check if current player is connected
         room_service = get_room_service()
@@ -222,7 +233,8 @@ async def _auto_play_disconnected_turns(
             break
 
         player_connected = any(
-            seat.user_id == current_player_id and seat.connected for seat in snapshot.seats
+            seat.user_id == current_player_id_str and seat.connected
+            for seat in snapshot.seats
         )
 
         if player_connected:
@@ -238,22 +250,19 @@ async def _auto_play_disconnected_turns(
             break
 
         player_connected = any(
-            seat.user_id == current_player_id and seat.connected for seat in snapshot.seats
+            seat.user_id == current_player_id_str and seat.connected
+            for seat in snapshot.seats
         )
 
         if player_connected:
             break
 
+        auto_played_ids.add(current_player_id_str)
+
         # Auto-play this player's turn
         state, events = auto_play_turn(state, current_player_id)
 
-        # Set auto_played flag on TurnStarted events
-        event_dicts = []
-        for event in events:
-            d = event.model_dump(mode="json")
-            if event.event_type == "turn_started":
-                d["auto_played"] = True
-            event_dicts.append(d)
+        event_dicts = [event.model_dump(mode="json") for event in events]
         all_auto_events.extend(event_dicts)
 
         # Save updated state
@@ -261,8 +270,16 @@ async def _auto_play_disconnected_turns(
 
         logger.info(
             "Auto-played disconnected player %s turn in room %s",
-            current_player_id[:8],
+            current_player_id_str[:8],
             room_id,
         )
 
-    return all_auto_events
+    # Mark TurnStarted events only for players who were actually auto-played
+    for d in all_auto_events:
+        if (
+            d.get("event_type") == "turn_started"
+            and d.get("player_id") in auto_played_ids
+        ):
+            d["auto_played"] = True
+
+    return all_auto_events, auto_played_ids

@@ -263,6 +263,7 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
 
     # Check if first player is disconnected and needs auto-play
     auto_event_dicts: list[dict] = []
+    auto_played_ids: set[str] = set()
     max_auto_plays = len(current_state.players)
 
     for _ in range(max_auto_plays):
@@ -271,9 +272,11 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
         if current_state.phase.value == "finished":
             break
 
-        current_player_id = str(current_state.current_turn.player_id)
+        current_player_id = current_state.current_turn.player_id
+        current_player_id_str = str(current_player_id)
         player_connected = any(
-            seat.user_id == current_player_id and seat.connected for seat in room_snapshot.seats
+            seat.user_id == current_player_id_str and seat.connected
+            for seat in room_snapshot.seats
         )
 
         if player_connected:
@@ -288,22 +291,35 @@ async def handle_start_game(ctx: HandlerContext) -> HandlerResult:
             break
 
         player_connected = any(
-            seat.user_id == current_player_id and seat.connected for seat in fresh_snapshot.seats
+            seat.user_id == current_player_id_str and seat.connected
+            for seat in fresh_snapshot.seats
         )
 
         if player_connected:
             break
 
+        auto_played_ids.add(current_player_id_str)
+
         current_state, auto_events = auto_play_turn(current_state, current_player_id)
 
-        # Set auto_played flag on TurnStarted events
         for event in auto_events:
-            d = event.model_dump(mode="json")
-            if event.event_type == "turn_started":
-                d["auto_played"] = True
-            auto_event_dicts.append(d)
+            auto_event_dicts.append(event.model_dump(mode="json"))
 
         await save_game_state(room_id, current_state.model_dump(mode="json"))
+
+    # Mark TurnStarted events only for players who were actually auto-played
+    for d in auto_event_dicts:
+        if (
+            d.get("event_type") == "turn_started"
+            and d.get("player_id") in auto_played_ids
+        ):
+            d["auto_played"] = True
+    for d in serialized_events:
+        if (
+            d.get("event_type") == "turn_started"
+            and d.get("player_id") in auto_played_ids
+        ):
+            d["auto_played"] = True
 
     all_events = serialized_events + auto_event_dicts
     serialized_state = current_state.model_dump(mode="json")
